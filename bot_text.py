@@ -196,7 +196,7 @@ if __name__ == "__main__":
 
     # Создание и запуск бота
     bot = InterviewBot(
-        api_key="sk-7ae1af1aa3224469b5ad9fa7ffb5a911",  # Замените на ваш API-ключ DeepSeek
+        api_key="",  # Замените на ваш API-ключ DeepSeek
         job_description=job_description,
         resume=resume
     )
