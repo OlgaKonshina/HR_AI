@@ -1,11 +1,16 @@
 import openai
 import time
 import json
+from audio_text import text_to_ogg
+from audio_text import recognize_audio_whisper
+from config import DEEPSEEK_API_KEY
+from audio_recording import load_audio
 
 
 class InterviewBot:
     def __init__(self, api_key, job_description, resume):
-        self.client = openai.OpenAI(api_key='', base_url="https://api.deepseek.com/v1")
+        self.client = openai.OpenAI(api_key=DEEPSEEK_API_KEY,
+                                    base_url="https://api.deepseek.com/v1")
         self.job_description = job_description
         self.resume = resume
         self.questions = []
@@ -24,7 +29,7 @@ class InterviewBot:
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": f'Ты HR-интервьюер. Вакансия: {self.job_description}. Резюме: {self.resume}. Задавай вопросы по очереди.'},
+                 "content": f'Ты HR-интервьюер. Тебя зовут Борис. Вакансия: {self.job_description}. Резюме: {self.resume}. Задавай вопросы по очереди.'},
                 {"role": "user", "content": prompt},
             ],
             stream=False
@@ -110,9 +115,10 @@ class InterviewBot:
             # Выводим вопрос
             print(f"🔹 Вопрос {self.current_question_number}/{num_questions}:")
             print(f"{question}\n")
-
+            # озвучиваем вопрос
+            text_to_ogg(question)
             # Получаем ответ
-            answer = input("💬 Ваш ответ: ")
+            answer = recognize_audio_whisper(load_audio())
             self.answers.append(answer)
 
             # Даем обратную связь
@@ -145,11 +151,11 @@ class InterviewBot:
         }
 
         # Сохранение в JSON
-        with open("interview_results.json", "w", encoding="utf-8") as f:
+        with open("reports/interview_results.json", "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
 
         # Сохранение в читаемом текстовом формате
-        with open("interview_results.txt", "w", encoding="utf-8") as f:
+        with open("reports/interview_results.txt", "w", encoding="utf-8") as f:
             f.write("=== ПОЛНЫЕ РЕЗУЛЬТАТЫ СОБЕСЕДОВАНИЯ ===\n\n")
             f.write(f"ВАКАНСИЯ: {self.job_description}\n")
             f.write(f"КАНДИДАТ: {self.resume[:200]}...\n\n")
@@ -185,10 +191,10 @@ def print_interview_summary(bot):
 if __name__ == "__main__":
     # Загрузка данных
     try:
-        with open('job_description', "r", encoding="utf-8") as f:
+        with open('data/job_decription/job_description', "r", encoding="utf-8") as f:
             job_description = f.read()
 
-        with open('resume', "r", encoding="utf-8") as f:
+        with open('data/resume/resume', "r", encoding="utf-8") as f:
             resume = f.read()
     except FileNotFoundError:
         print("❌ Файлы 'job_description' или 'resume' не найдены!")
@@ -196,13 +202,13 @@ if __name__ == "__main__":
 
     # Создание и запуск бота
     bot = InterviewBot(
-        api_key="",  # Замените на ваш API-ключ DeepSeek
+        api_key=DEEPSEEK_API_KEY,  # API-ключ DeepSeek
         job_description=job_description,
         resume=resume
     )
 
     try:
-        bot.conduct_interview(num_questions=5)
+        bot.conduct_interview(num_questions=2)
 
         # Дополнительная сводка
         print_interview_summary(bot)
