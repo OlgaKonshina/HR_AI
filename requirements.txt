@@ -1,0 +1,7 @@
+openai
+sounddevice
+soundfile
+requests
+playsound
+openai-whisper
+
