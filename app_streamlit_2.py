@@ -5,7 +5,7 @@ import time
 import json
 import os
 import PyPDF2
-import docx
+from docx import Document
 from io import BytesIO
 import re
 import pandas as pd
