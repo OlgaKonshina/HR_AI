@@ -29,7 +29,7 @@ class InterviewBot:
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": f'Ты HR-интервьюер. Тебя зовут Борис. Вакансия: {self.job_description}. Резюме: {self.resume}. Задавай вопросы по очереди.'},
+                 "content": f'Ты HR-интервьюер. Тебя зовут Лев. Вакансия: {self.job_description}. Резюме: {self.resume}. Задавай вопросы по очереди.Задавай наводящие и уточняющие вопросы'},
                 {"role": "user", "content": prompt},
             ],
             stream=False
