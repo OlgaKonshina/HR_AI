@@ -140,22 +140,24 @@ class InterviewBot:
         for i, resume in enumerate(resumes):
             with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)}..."):
                 prompt = f"""
-                Проанализируй соответствие резюме кандидата вакансии.
+                Анализ соответствия резюме вакансии.
 
-                ВАКАНСИЯ:
-                {job_description}
+                ВАКАНСИЯ: {job_description[:1000]}
+                РЕЗЮМЕ: {resume['text'][:1000]}
 
-                РЕЗЮМЕ КАНДИДАТА:
-                {resume['text'][:2000]}  # Ограничиваем длину
+                Оцени:
+                1. Процент совпадения (0-100%)
+                2. Подходит ли кандидат (да/нет)
+                3. 2-3 сильные стороны
+                4. 2-3 слабые стороны
+                5. Краткое обоснование
 
-                Проанализируй и дай ответ в формате JSON:
-                {{
-                    "match_score": 0-100,
-                    "is_suitable": true/false,
-                    "strengths": ["сильная сторона1", "сильная сторона2"],
-                    "weaknesses": ["слабая сторона1", "слабая сторона2"],
-                    "reason": "краткое обоснование"
-                }}
+                Формат ответа строго:
+                СОВПАДЕНИЕ: число%
+                ПОДХОДИТ: да/нет
+                СИЛЬНЫЕ: пункт1, пункт2, пункт3
+                СЛАБЫЕ: пункт1, пункт2, пункт3
+                ОБОСНОВАНИЕ: текст
                 """
 
                 try:
@@ -163,16 +165,54 @@ class InterviewBot:
                     response = client.chat.completions.create(
                         model="deepseek-chat",
                         messages=[
-                            {"role": "system", "content": "Ты HR-эксперт. Анализируй соответствие резюме вакансии."},
+                            {"role": "system", "content": "Ты HR-аналитик. Отвечай строго в указанном формате."},
                             {"role": "user", "content": prompt},
                         ],
-                        stream=False
+                        stream=False,
+                        temperature=0.1
                     )
 
-                    result = json.loads(response.choices[0].message.content)
-                    resume['llm_analysis'] = result
+                    result_text = response.choices[0].message.content
 
-                    if result['is_suitable']:
+                    # Инициализация результата
+                    analysis_result = {
+                        'match_score': 0,
+                        'is_suitable': False,
+                        'strengths': [],
+                        'weaknesses': [],
+                        'reason': 'Анализ выполнен'
+                    }
+
+                    # Парсим ответ
+                    lines = result_text.split('\n')
+                    current_section = None
+
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        if 'СОВПАДЕНИЕ:' in line:
+                            try:
+                                match = re.search(r'(\d+)%', line)
+                                if match:
+                                    analysis_result['match_score'] = int(match.group(1))
+                            except:
+                                pass
+                        elif 'ПОДХОДИТ:' in line:
+                            analysis_result['is_suitable'] = 'да' in line.lower()
+                        elif 'СИЛЬНЫЕ:' in line:
+                            content = line.split('СИЛЬНЫЕ:')[-1].strip()
+                            analysis_result['strengths'] = [s.strip() for s in content.split(',') if s.strip()]
+                        elif 'СЛАБЫЕ:' in line:
+                            content = line.split('СЛАБЫЕ:')[-1].strip()
+                            analysis_result['weaknesses'] = [w.strip() for w in content.split(',') if w.strip()]
+                        elif 'ОБОСНОВАНИЕ:' in line:
+                            analysis_result['reason'] = line.split('ОБОСНОВАНИЕ:')[-1].strip()
+
+                    resume['llm_analysis'] = analysis_result
+
+                    if analysis_result['is_suitable']:
                         filtered.append(resume)
 
                 except Exception as e:
@@ -182,11 +222,10 @@ class InterviewBot:
                         'is_suitable': False,
                         'strengths': [],
                         'weaknesses': [],
-                        'reason': 'Ошибка анализа'
+                        'reason': f'Ошибка: {str(e)}'
                     }
 
         return sorted(filtered, key=lambda x: x['llm_analysis']['match_score'], reverse=True)
-
 
 # Функции для обработки файлов разных форматов
 def extract_text_from_file(file):
