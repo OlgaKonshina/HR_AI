@@ -1,12 +1,8 @@
-# app_streamlit.py
 import streamlit as st
 import openai
-import time
-import json
 import os
 import PyPDF2
 import docx
-import pandas as pd
 from io import BytesIO
 import re
 import uuid
@@ -14,6 +10,59 @@ from datetime import datetime
 from audio_text import text_to_ogg, recognize_audio_whisper
 from audio_recording import load_audio
 from config import DEEPSEEK_API_KEY
+import sys
+from pathlib import Path
+
+import json
+import re
+from pathlib import Path
+import pandas as pd
+import docx
+from striprtf.striprtf import rtf_to_text
+import fitz  # PyMuPDF
+from transformers import AutoTokenizer, AutoModel
+import torch
+import torch.nn.functional as F
+
+# Добавляем путь к текущей директории для импорта document_processor
+sys.path.append(str(Path(__file__).parent))
+
+# Импортируем из внешнего файла
+# Измените импорт и настройки в app_streamlit.py
+try:
+    from document_processor import DocumentReader, extract_job_title
+
+    # Пробуем импортировать get_embedding с правильным указанием модели
+    try:
+        from document_processor import get_embedding
+
+        print("✅ get_embedding импортирован успешно!")
+
+        # Тестируем с правильной моделью для русского языка
+        try:
+            # Используем русскоязычную модель
+            test_embedding = get_embedding("тест", "cointegrated/rubert-tiny2")
+            print("✅ RuBERT-Tiny модель работает!")
+            DOCUMENT_PROCESSOR_AVAILABLE = True
+        except Exception as e:
+            print(f"⚠️ RuBERT-Tiny не доступна: {e}")
+            # Пробуем альтернативную модель
+            try:
+                test_embedding = get_embedding("тест", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+                print("✅ Multilingual модель работает!")
+                DOCUMENT_PROCESSOR_AVAILABLE = True
+            except Exception as e2:
+                print(f"❌ Все модели не работают: {e2}")
+                DOCUMENT_PROCESSOR_AVAILABLE = False
+
+    except Exception as e:
+        print(f"❌ Ошибка импорта get_embedding: {e}")
+        DOCUMENT_PROCESSOR_AVAILABLE = False
+
+except ImportError as e:
+    print(f"❌ Основной импорт не удался: {e}")
+    DOCUMENT_PROCESSOR_AVAILABLE = False
+
 
 # Дополнительные импорты для поддержки разных форматов
 try:
@@ -25,18 +74,6 @@ try:
     from odf import text, teletype
 except ImportError:
     st.error("Для поддержки ODT установите: !pip install odfpy")
-
-# Импорты из document_processor.py
-try:
-    import fitz  # PyMuPDF
-except ImportError:
-    st.error("Для поддержки PDF установите: !pip install PyMuPDF")
-try:
-    from transformers import AutoTokenizer, AutoModel
-    import torch
-    import torch.nn.functional as F
-except ImportError:
-    st.error("Для работы с embeddings установите: !pip install transformers torch")
 
 # Настройка страницы
 st.set_page_config(
@@ -144,144 +181,204 @@ class InterviewBot:
             formatted += f"{i}. В: {question}\n   О: {answer}\n   Ф: {feedback}\n\n"
         return formatted
 
-    # НОВЫЙ МЕТОД ИЗ DOCUMENT_PROCESSOR.PY
     @staticmethod
-    def extract_keywords_from_job(job_text):
-        """Извлекает ключевые слова из описания вакансии"""
-        stop_words = {'опыт', 'работа', 'работы', 'обязанности', 'требования', 'знание', 'навыки',
-                      'умение', 'возможность', 'необходимый', 'обязательный', 'желательный'}
+    def filter_resumes_with_embeddings(resumes, job_description):
+        """Фильтрация резюме с использованием embeddings из document_processor"""
+        if not DOCUMENT_PROCESSOR_AVAILABLE:
+            st.error("Модуль document_processor не доступен. Используется резервный метод.")
+            return InterviewBot.filter_resumes_fallback(resumes, job_description)
 
-        words = re.findall(r'\b[a-zA-Zа-яА-Я]{4,}\b', job_text.lower())
+        filtered = []
+        model_path = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+        try:
+            # Получаем embedding для вакансии
+            job_emb = get_embedding(job_description, model_path)
+
+            for i, resume in enumerate(resumes):
+                with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)} с помощью embeddings..."):
+                    try:
+                        # Получаем embedding для резюме
+                        resume_emb = get_embedding(resume['text'], model_path)
+
+                        # Вычисляем косинусную схожесть
+                        similarity = torch.mm(resume_emb, job_emb.T).item() * 100
+
+                        # Анализируем результат
+                        analysis_result = InterviewBot._analyze_embedding_result(similarity, resume['text'],
+                                                                                 job_description)
+
+                        resume['analysis'] = analysis_result
+
+                        if analysis_result['is_suitable']:
+                            filtered.append(resume)
+
+                    except Exception as e:
+                        st.error(f"Ошибка анализа резюме {resume['name']} с embeddings: {str(e)}")
+                        # Резервный анализ при ошибке
+                        analysis_result = InterviewBot._analyze_resume_fallback(resume['text'], job_description)
+                        resume['analysis'] = analysis_result
+                        if analysis_result['is_suitable']:
+                            filtered.append(resume)
+
+            return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
+
+        except Exception as e:
+            st.error(f"Ошибка при работе с embeddings: {str(e)}")
+            return InterviewBot.filter_resumes_fallback(resumes, job_description)
+
+    @staticmethod
+    def filter_resumes_with_embeddings(resumes, job_description):
+        """Фильтрация резюме с использованием русскоязычных embeddings"""
+        if not DOCUMENT_PROCESSOR_AVAILABLE:
+            st.error("Модуль document_processor не доступен. Используется резервный метод.")
+            return InterviewBot.filter_resumes_fallback(resumes, job_description)
+
+        filtered = []
+
+        # Используем русскоязычную модель
+        model_path = "cointegrated/rubert-tiny2"  # Русская маленькая модель
+
+        try:
+            # Получаем embedding для вакансии
+            job_emb = get_embedding(job_description[:512], model_path)  # Ограничиваем длину
+
+            for i, resume in enumerate(resumes):
+                with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)} с помощью RuBERT..."):
+                    try:
+                        # Получаем embedding для резюме (первые 512 токенов)
+                        resume_short = resume['text'][:1000]  # Берем начало резюме
+                        resume_emb = get_embedding(resume_short, model_path)
+
+                        # Вычисляем косинусную схожесть
+                        similarity = torch.nn.functional.cosine_similarity(job_emb, resume_emb).item() * 100
+
+                        # Анализируем результат
+                        analysis_result = InterviewBot._analyze_embedding_result(similarity, resume['text'],
+                                                                                 job_description)
+
+                        resume['analysis'] = analysis_result
+
+                        if analysis_result['is_suitable']:
+                            filtered.append(resume)
+
+                    except Exception as e:
+                        st.error(f"Ошибка анализа резюме {resume['name']}: {str(e)}")
+                        # Резервный анализ при ошибке
+                        analysis_result = InterviewBot._analyze_resume_fallback(resume['text'], job_description)
+                        resume['analysis'] = analysis_result
+                        if analysis_result['is_suitable']:
+                            filtered.append(resume)
+
+            return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
+
+        except Exception as e:
+            st.error(f"Ошибка при работе с русскоязычными embeddings: {str(e)}")
+            return InterviewBot.filter_resumes_fallback(resumes, job_description)
+
+    @staticmethod
+    def filter_resumes_fallback(resumes, job_description):
+        """Резервный метод фильтрации без embeddings"""
+        filtered = []
+
+        # Извлекаем ключевые слова из вакансии
+        job_keywords = InterviewBot._extract_keywords(job_description)
+
+        st.write(f"🔑 **Ключевые слова вакансии:** {', '.join(job_keywords[:10])}")
+
+        for i, resume in enumerate(resumes):
+            with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)} (резервный метод)..."):
+                analysis_result = InterviewBot._analyze_resume_fallback(resume['text'], job_description, job_keywords)
+                resume['analysis'] = analysis_result
+
+                if analysis_result['is_suitable']:
+                    filtered.append(resume)
+
+        return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
+
+    @staticmethod
+    def _extract_keywords(text):
+        """Извлекает ключевые слова из текста"""
+        stop_words = {'опыт', 'работа', 'работы', 'обязанности', 'требования', 'знание', 'навыки'}
+        words = re.findall(r'\b[a-zA-Zа-яА-Я]{4,}\b', text.lower())
         keywords = [word for word in words if word not in stop_words]
 
         from collections import Counter
         keyword_counts = Counter(keywords)
         return [word for word, count in keyword_counts.most_common(20)]
 
-    # НОВЫЙ МЕТОД ИЗ DOCUMENT_PROCESSOR.PY
     @staticmethod
-    def calculate_resume_score(resume_text, job_keywords, job_text):
-        """Вычисляет score резюме на основе ключевых слов"""
-        resume_lower = resume_text.lower()
-        job_text_lower = job_text.lower()
+    def _analyze_resume_fallback(resume_text, job_description, job_keywords=None):
+        """Резервный анализ резюме"""
+        if job_keywords is None:
+            job_keywords = InterviewBot._extract_keywords(job_description)
 
+        resume_lower = resume_text.lower()
+        job_lower = job_description.lower()
+
+        # Простой scoring на основе ключевых слов
         score = 0
         found_keywords = []
-        missing_keywords = []
 
-        # 1. Совпадение ключевых слов
         for keyword in job_keywords:
             if re.search(rf'\b{re.escape(keyword)}\b', resume_lower):
                 score += 3
                 found_keywords.append(keyword)
-            else:
-                missing_keywords.append(keyword)
 
-        # 2. Опыт работы
-        experience_patterns = [
-            r'опыт работы.*?(\d+)[^\d]*лет',
-            r'стаж.*?(\d+)[^\d]*год',
-            r'experience.*?(\d+)[^\d]*year'
-        ]
+        # Проверяем опыт работы
+        experience_match = re.search(r'опыт работы.*?(\d+)[^\d]*лет', resume_lower)
+        if experience_match:
+            years = int(experience_match.group(1))
+            score += min(years * 2, 10)
 
-        for pattern in experience_patterns:
-            match = re.search(pattern, resume_lower)
-            if match:
-                years = int(match.group(1))
-                score += min(years * 2, 10)
-                break
+        # Нормализуем score
+        max_score = len(job_keywords) * 3 + 10
+        match_score = min(int((score / max_score) * 100), 100) if max_score > 0 else 0
 
-        # 3. Образование
-        education_keywords = ['высшее', 'образование', 'вуз', 'университет', 'бакалавр', 'магистр']
-        if any(edu in resume_lower for edu in education_keywords):
-            score += 5
+        is_suitable = match_score >= 40
 
-        # 4. Навыки из вакансии
-        skills_section = re.search(r'(навыки|skills|компетенции).*?:(.*?)(?=\n\n|\n[A-ZА-Я]|$)', resume_lower,
-                                   re.DOTALL | re.IGNORECASE)
-        if skills_section:
-            skills_text = skills_section.group(2)
-            job_skills = re.findall(r'\b[a-zA-Zа-яА-Я]{3,}\b', job_text_lower)
-            for skill in job_skills:
-                if skill in skills_text and len(skill) > 3:
-                    score += 1
-
-        # Нормализуем score до 100%
-        max_possible_score = len(job_keywords) * 3 + 10 + 5 + 20
-        final_score = min(int((score / max_possible_score) * 100), 100) if max_possible_score > 0 else 0
-
-        # Определяем подходит ли кандидат
-        is_suitable = final_score >= 40
-
-        # Генерируем анализ
         strengths = []
         weaknesses = []
 
         if found_keywords:
             strengths.append(f"Совпадение по ключевым словам: {', '.join(found_keywords[:5])}")
-        if missing_keywords:
-            weaknesses.append(f"Отсутствуют ключевые слова: {', '.join(missing_keywords[:5])}")
 
-        if final_score < 40:
-            weaknesses.append("Низкий общий score соответствия")
+        if match_score < 40:
+            weaknesses.append("Низкий score соответствия")
 
         return {
-            'match_score': final_score,
+            'match_score': match_score,
             'is_suitable': is_suitable,
             'strengths': strengths,
             'weaknesses': weaknesses,
-            'found_keywords': found_keywords,
-            'missing_keywords': missing_keywords,
-            'reason': f"Score: {final_score}% - {'Подходит' if is_suitable else 'Не подходит'}"
+            'reason': f"Score: {match_score}% - {'Подходит' if is_suitable else 'Не подходит'}"
         }
-
-    # НОВЫЙ МЕТОД ИЗ DOCUMENT_PROCESSOR.PY
-    @staticmethod
-    def filter_resumes(resumes, job_description):
-        """Надежная фильтрация резюме без LLM"""
-        filtered = []
-
-        # Извлекаем ключевые слова из вакансии
-        job_keywords = InterviewBot.extract_keywords_from_job(job_description)
-
-        st.write(f"🔑 **Ключевые слова вакансии:** {', '.join(job_keywords[:10])}")
-
-        for i, resume in enumerate(resumes):
-            with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)}..."):
-                try:
-                    # Вычисляем score
-                    analysis_result = InterviewBot.calculate_resume_score(
-                        resume['text'], job_keywords, job_description
-                    )
-
-                    resume['analysis'] = analysis_result
-
-                    if analysis_result['is_suitable']:
-                        filtered.append(resume)
-
-                except Exception as e:
-                    st.error(f"Ошибка анализа резюме {resume['name']}: {str(e)}")
-                    # Резервный анализ
-                    resume_lower = resume['text'].lower()
-                    has_experience = any(word in resume_lower for word in ['опыт', 'experience', 'стаж'])
-                    has_education = any(
-                        word in resume_lower for word in ['образование', 'education', 'вуз', 'университет'])
-
-                    resume['analysis'] = {
-                        'match_score': 50 if has_experience else 20,
-                        'is_suitable': has_experience and has_education,
-                        'strengths': ['Есть опыт работы'] if has_experience else [],
-                        'weaknesses': ['Нет опыта работы'] if not has_experience else [],
-                        'reason': 'Автоматическая оценка'
-                    }
-
-        return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
 
 
 # Функции для обработки файлов разных форматов
 def extract_text_from_file(file):
     """Извлекает текст из файлов разных форматов"""
     try:
+        # Используем DocumentReader из внешнего модуля если доступен
+        if DOCUMENT_PROCESSOR_AVAILABLE:
+            try:
+                # Сохраняем временный файл для обработки
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file.name) as tmp:
+                    tmp.write(file.read())
+                    tmp_path = tmp.name
+
+                reader = DocumentReader(tmp_path)
+                text = reader.extract_text()
+
+                # Удаляем временный файл
+                os.unlink(tmp_path)
+                return text
+
+            except Exception as e:
+                st.warning(f"DocumentReader не смог обработать файл: {e}. Используем резервный метод.")
+
+        # Резервный метод обработки файлов
         # PDF
         if file.type == "application/pdf":
             pdf_reader = PyPDF2.PdfReader(file)
@@ -298,57 +395,16 @@ def extract_text_from_file(file):
                 text += paragraph.text + "\n"
             return text
 
-        # Word DOC (старый формат)
-        elif file.type == "application/msword":
-            return "Формат DOC требует установки antiword или catdoc"
-
-        # RTF
-        elif file.type == "application/rtf" or file.name.lower().endswith('.rtf'):
-            try:
-                from striprtf.striprtf import rtf_to_text
-                rtf_content = file.read().decode('utf-8', errors='ignore')
-                return rtf_to_text(rtf_content)
-            except ImportError:
-                return "Для чтения RTF установите: pip install striprtf"
-            except Exception as e:
-                return f"Ошибка чтения RTF: {str(e)}"
-
-        # ODT (OpenDocument)
-        elif file.type == "application/vnd.oasis.opendocument.text" or file.name.lower().endswith('.odt'):
-            try:
-                from odf import text, teletype
-                from odf.opendocument import load
-
-                doc = load(BytesIO(file.read()))
-                all_text = []
-
-                for paragraph in doc.getElementsByType(text.P):
-                    all_text.append(teletype.extractText(paragraph))
-
-                return "\n".join(all_text)
-            except ImportError:
-                return "Для чтения ODT установите: pip install odfpy"
-            except Exception as e:
-                return f"Ошибка чтения ODT: {str(e)}"
-
         # Текстовые файлы
         elif file.type == "text/plain":
             return file.read().decode("utf-8", errors='ignore')
 
-        # HTML
-        elif file.type == "text/html" or file.name.lower().endswith('.html'):
-            try:
-                from bs4 import BeautifulSoup
-                html_content = file.read().decode('utf-8', errors='ignore')
-                soup = BeautifulSoup(html_content, 'html.parser')
-                return soup.get_text()
-            except ImportError:
-                return "Для чтения HTML установите: pip install beautifulsoup4"
-            except Exception as e:
-                return f"Ошибка чтения HTML: {str(e)}"
-
         else:
-            return f"Формат файла {file.name} ({file.type}) не поддерживается"
+            # Пробуем прочитать как текст
+            try:
+                return file.read().decode("utf-8", errors='ignore')
+            except:
+                return f"Формат файла {file.name} не поддерживается"
 
     except Exception as e:
         return f"Ошибка чтения файла {file.name}: {str(e)}"
@@ -465,12 +521,15 @@ else:
         **Вакансии и резюме:**
         - 📄 PDF (.pdf)
         - 📝 Word DOCX (.docx)
-        - 📝 Word DOC (.doc) - требует antiword/catdoc
+        - 📝 Word DOC (.doc)
         - 📋 RTF (.rtf)
         - 📘 OpenDocument (.odt)
         - 📱 Текст (.txt)
         - 🌐 HTML (.html)
         """)
+
+        if not DOCUMENT_PROCESSOR_AVAILABLE:
+            st.warning("⚠️ Расширенная обработка файлов недоступна")
 
     tab1, tab2 = st.tabs(["📁 Этап 1: Загрузка", "👥 Этап 2: Отбор"])
 
@@ -483,7 +542,7 @@ else:
             st.subheader("Данные вакансии")
             job_file = st.file_uploader(
                 "Загрузите описание вакансии:",
-                type=["pdf", "docx", "doc", "rtf", "odt", "txt", "html"],
+                type=["pdf", "docx", "txt", "rtf", "odt"],
                 key="job_file"
             )
 
@@ -504,7 +563,7 @@ else:
             st.subheader("Загрузка резюме")
             uploaded_files = st.file_uploader(
                 "Загрузите резюме кандидатов (до 100 файлов):",
-                type=["pdf", "docx", "doc", "rtf", "odt", "txt", "html"],
+                type=["pdf", "docx", "txt", "rtf", "odt"],
                 accept_multiple_files=True,
                 key="resume_files"
             )
@@ -536,20 +595,20 @@ else:
                 for fmt, count in format_stats.items():
                     st.write(f"• {fmt}: {count} файлов")
 
-        # ИЗМЕНЕННАЯ ЧАСТЬ: используем новую фильтрацию вместо LLM
-        if st.button("🚀 Начать фильтрацию",
+        # ИСПОЛЬЗУЕМ ФИЛЬТРАЦИЮ ИЗ DOCUMENT_PROCESSOR
+        if st.button("🚀 Начать AI-фильтрацию",
                      type="primary") and st.session_state.job_description and st.session_state.hr_email and st.session_state.resumes:
-            with st.spinner("Анализируем резюме..."):
-                st.session_state.filtered_candidates = InterviewBot.filter_resumes(
+            with st.spinner("AI анализирует резюме с помощью embeddings..."):
+                st.session_state.filtered_candidates = InterviewBot.filter_resumes_with_embeddings(
                     st.session_state.resumes, st.session_state.job_description
                 )
-            st.success(f"Найдено {len(st.session_state.filtered_candidates)} подходящих кандидатов")
+            st.success(f"AI отобрал {len(st.session_state.filtered_candidates)} подходящих кандидатов")
 
     with tab2:
-        st.header("👥 Этап 2: Результаты отбора")
+        st.header("👥 Этап 2: Результаты AI-отбора")
 
         if not st.session_state.get('filtered_candidates'):
-            st.warning("Загрузите данные и выполните фильтрацию в Этапе 1")
+            st.warning("Загрузите данные и выполните AI-фильтрацию в Этапе 1")
         else:
             st.write(f"**Найдено подходящих кандидатов:** {len(st.session_state.filtered_candidates)}")
 
@@ -560,7 +619,7 @@ else:
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        st.write("**📊 Анализ:**")
+                        st.write("**🤖 AI Анализ:**")
                         st.write(f"**Совпадение:** {analysis.get('match_score', 0)}%")
                         st.write(
                             f"**Рекомендация:** {'✅ Подходит' if analysis.get('is_suitable', False) else '❌ Не подходит'}")
