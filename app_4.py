@@ -183,79 +183,38 @@ class InterviewBot:
 
     @staticmethod
     def filter_resumes_with_embeddings(resumes, job_description):
-        """Фильтрация резюме с использованием embeddings из document_processor"""
+        """Фильтрация резюме с использованием embeddings"""
         if not DOCUMENT_PROCESSOR_AVAILABLE:
             st.error("Модуль document_processor не доступен. Используется резервный метод.")
             return InterviewBot.filter_resumes_fallback(resumes, job_description)
 
         filtered = []
-        model_path = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        model_path = "cointegrated/rubert-tiny2"
 
         try:
-            # Получаем embedding для вакансии
-            job_emb = get_embedding(job_description, model_path)
+            job_emb = get_embedding(job_description[:512], model_path)
 
             for i, resume in enumerate(resumes):
                 with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)} с помощью embeddings..."):
                     try:
-                        # Получаем embedding для резюме
-                        resume_emb = get_embedding(resume['text'], model_path)
-
-                        # Вычисляем косинусную схожесть
-                        similarity = torch.mm(resume_emb, job_emb.T).item() * 100
-
-                        # Анализируем результат
-                        analysis_result = InterviewBot._analyze_embedding_result(similarity, resume['text'],
-                                                                                 job_description)
-
-                        resume['analysis'] = analysis_result
-
-                        if analysis_result['is_suitable']:
-                            filtered.append(resume)
-
-                    except Exception as e:
-                        st.error(f"Ошибка анализа резюме {resume['name']} с embeddings: {str(e)}")
-                        # Резервный анализ при ошибке
-                        analysis_result = InterviewBot._analyze_resume_fallback(resume['text'], job_description)
-                        resume['analysis'] = analysis_result
-                        if analysis_result['is_suitable']:
-                            filtered.append(resume)
-
-            return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
-
-        except Exception as e:
-            st.error(f"Ошибка при работе с embeddings: {str(e)}")
-            return InterviewBot.filter_resumes_fallback(resumes, job_description)
-
-    @staticmethod
-    def filter_resumes_with_embeddings(resumes, job_description):
-        """Фильтрация резюме с использованием русскоязычных embeddings"""
-        if not DOCUMENT_PROCESSOR_AVAILABLE:
-            st.error("Модуль document_processor не доступен. Используется резервный метод.")
-            return InterviewBot.filter_resumes_fallback(resumes, job_description)
-
-        filtered = []
-
-        # Используем русскоязычную модель
-        model_path = "cointegrated/rubert-tiny2"  # Русская маленькая модель
-
-        try:
-            # Получаем embedding для вакансии
-            job_emb = get_embedding(job_description[:512], model_path)  # Ограничиваем длину
-
-            for i, resume in enumerate(resumes):
-                with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)} с помощью RuBERT..."):
-                    try:
-                        # Получаем embedding для резюме (первые 512 токенов)
-                        resume_short = resume['text'][:1000]  # Берем начало резюме
+                        resume_short = resume['text'][:1000]
                         resume_emb = get_embedding(resume_short, model_path)
 
                         # Вычисляем косинусную схожесть
-                        similarity = torch.nn.functional.cosine_similarity(job_emb, resume_emb).item() * 100
+                        similarity_tensor = torch.nn.functional.cosine_similarity(resume_emb, job_emb)
+                        similarity = similarity_tensor.item() * 100
 
-                        # Анализируем результат
-                        analysis_result = InterviewBot._analyze_embedding_result(similarity, resume['text'],
-                                                                                 job_description)
+                        # Создаем анализ результата
+                        analysis_result = {
+                            'match_score': round(similarity, 1),
+                            'is_suitable': similarity >= 40,
+                            'strengths': [f"Семантическое соответствие: {similarity:.1f}%"],
+                            'weaknesses': [],
+                            'reason': f"Семантический анализ: {similarity:.1f}%"
+                        }
+
+                        if similarity < 40:
+                            analysis_result['weaknesses'].append("Низкое семантическое соответствие")
 
                         resume['analysis'] = analysis_result
 
@@ -265,15 +224,20 @@ class InterviewBot:
                     except Exception as e:
                         st.error(f"Ошибка анализа резюме {resume['name']}: {str(e)}")
                         # Резервный анализ при ошибке
-                        analysis_result = InterviewBot._analyze_resume_fallback(resume['text'], job_description)
+                        analysis_result = {
+                            'match_score': 50,
+                            'is_suitable': True,
+                            'strengths': ['Автоматическая оценка'],
+                            'weaknesses': [],
+                            'reason': 'Автоматическая оценка'
+                        }
                         resume['analysis'] = analysis_result
-                        if analysis_result['is_suitable']:
-                            filtered.append(resume)
+                        filtered.append(resume)
 
             return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
 
         except Exception as e:
-            st.error(f"Ошибка при работе с русскоязычными embeddings: {str(e)}")
+            st.error(f"Ошибка при работе с embeddings: {str(e)}")
             return InterviewBot.filter_resumes_fallback(resumes, job_description)
 
     @staticmethod
