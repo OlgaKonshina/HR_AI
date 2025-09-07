@@ -1,4 +1,3 @@
-# app_streamlit.py
 import streamlit as st
 import openai
 import time
@@ -14,6 +13,8 @@ from datetime import datetime
 import requests
 from pathlib import Path
 import sys
+import torch
+import torch.nn.functional as F
 
 # Добавляем путь для импортов
 sys.path.append(str(Path(__file__).parent))
@@ -42,6 +43,9 @@ except ImportError:
 BASE_URL = os.getenv('BASE_URL', 'http://localhost:8501')
 IS_PRODUCTION = os.getenv('IS_PRODUCTION', 'False').lower() == 'true'
 
+# Модель для русскоязычных embeddings
+RU_BERT_MODEL = "cointegrated/rubert-tiny2"
+
 # Настройка страницы
 st.set_page_config(
     page_title="HR Бот - AI Recruiter",
@@ -49,7 +53,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# База данных интервью (в production используем Redis или базу)
+# База данных интервью
 INTERVIEWS_DB = "interviews_db.json"
 
 
@@ -77,14 +81,6 @@ class InterviewDB:
             db = json.load(f)
         return db.get(interview_id)
 
-    def delete_interview(self, interview_id):
-        with open(self.db_file, 'r', encoding='utf-8') as f:
-            db = json.load(f)
-        if interview_id in db:
-            del db[interview_id]
-            with open(self.db_file, 'w', encoding='utf-8') as f:
-                json.dump(db, f, ensure_ascii=False, indent=2)
-
 
 # Инициализация БД
 interview_db = InterviewDB()
@@ -98,6 +94,12 @@ class InterviewBot:
         self.questions = []
         self.answers = []
         self.feedbacks = []
+
+    def _format_qa_for_assessment(self):  # ДОБАВЛЕНО
+        formatted = ""
+        for i, (question, answer, feedback) in enumerate(zip(self.questions, self.answers, self.feedbacks), 1):
+            formatted += f"{i}. В: {question}\n   О: {answer}\n   Ф: {feedback}\n\n"
+        return formatted
 
     def generate_question(self, previous_answer=None):
         if previous_answer is None:
@@ -170,65 +172,163 @@ class InterviewBot:
         )
         return response.choices[0].message.content
 
-    def _format_qa_for_assessment(self):
-        formatted = ""
-        for i, (question, answer, feedback) in enumerate(zip(self.questions, self.answers, self.feedbacks), 1):
-            formatted += f"{i}. В: {question}\n   О: {answer}\n   Ф: {feedback}\n\n"
-        return formatted
+    @staticmethod
+    def get_embedding(text, model_path=RU_BERT_MODEL):
+        """Генерирует embedding с помощью RuBERT-Tiny"""
+        try:
+            from transformers import AutoTokenizer, AutoModel
+
+            # Кэшируем модель и токенайзер
+            if not hasattr(InterviewBot, '_tokenizer'):
+                InterviewBot._tokenizer = AutoTokenizer.from_pretrained(model_path)
+            if not hasattr(InterviewBot, '_model'):
+                InterviewBot._model = AutoModel.from_pretrained(model_path)
+
+            # Токенизация
+            inputs = InterviewBot._tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=512
+            )
+
+            # Получение эмбеддингов
+            with torch.no_grad():
+                outputs = InterviewBot._model(**inputs)
+                embeddings = outputs.last_hidden_state.mean(dim=1)
+                embeddings = F.normalize(embeddings, p=2, dim=1)
+
+            return embeddings
+
+        except Exception as e:
+            st.error(f"Ошибка получения embedding: {e}")
+            # Возвращаем случайный embedding при ошибке
+            return torch.randn(1, 312)  # Размер для rubert-tiny
 
     @staticmethod
-    def filter_resumes(resumes, job_description):
-        """Упрощенная фильтрация резюме"""
+    def filter_resumes_with_rubert(resumes, job_description):
+        """Фильтрация резюме с использованием RuBERT-Tiny"""
         filtered = []
 
-        # Ключевые слова из вакансии
+        try:
+            # Получаем embedding для вакансии
+            job_emb = InterviewBot.get_embedding(job_description[:512])  # Ограничиваем длину
+
+            for i, resume in enumerate(resumes):
+                with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)} с помощью RuBERT-Tiny..."):
+                    try:
+                        # Получаем embedding для резюме
+                        resume_short = resume['text'][:1000]  # Берем начало резюме
+                        resume_emb = InterviewBot.get_embedding(resume_short)
+
+                        # Вычисляем косинусную схожесть
+                        similarity = F.cosine_similarity(job_emb, resume_emb).item() * 100
+
+                        # Анализируем результат
+                        analysis_result = InterviewBot._analyze_rubert_result(
+                            similarity, resume['text'], job_description
+                        )
+
+                        resume['analysis'] = analysis_result
+
+                        if analysis_result['is_suitable']:
+                            filtered.append(resume)
+
+                    except Exception as e:
+                        st.error(f"Ошибка анализа резюме {resume['name']}: {str(e)}")
+                        # Резервный анализ при ошибке
+                        analysis_result = InterviewBot._analyze_resume_fallback(
+                            resume['text'], job_description
+                        )
+                        resume['analysis'] = analysis_result
+                        if analysis_result['is_suitable']:
+                            filtered.append(resume)
+
+            return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
+
+        except Exception as e:
+            st.error(f"Ошибка при работе с RuBERT: {str(e)}")
+            return InterviewBot.filter_resumes_fallback(resumes, job_description)
+
+    @staticmethod
+    def _analyze_rubert_result(similarity, resume_text, job_description):
+        """Анализ результатов RuBERT"""
+        is_suitable = similarity >= 40
+
+        strengths = []
+        weaknesses = []
+
+        if similarity >= 60:
+            strengths.append("Высокое семантическое соответствие")
+        elif similarity >= 40:
+            strengths.append("Умеренное семантическое соответствие")
+        else:
+            weaknesses.append("Низкое семантическое соответствие")
+
+        # Дополнительный анализ ключевых слов
+        resume_lower = resume_text.lower()
+        job_lower = job_description.lower()
+
+        # Ищем общие ключевые слова
+        resume_words = set(re.findall(r'\b[а-яА-Я]{4,}\b', resume_lower))
+        job_words = set(re.findall(r'\b[а-яА-Я]{4,}\b', job_lower))
+        common_words = resume_words.intersection(job_words)
+
+        if common_words:
+            strengths.append(f"Общие ключевые слова: {', '.join(list(common_words)[:5])}")
+
+        return {
+            'match_score': round(similarity, 1),
+            'is_suitable': is_suitable,
+            'strengths': strengths,
+            'weaknesses': weaknesses,
+            'reason': f"Семантическое соответствие (RuBERT): {similarity:.1f}%"
+        }
+
+    @staticmethod
+    def _analyze_resume_fallback(resume_text, job_description):
+        """Резервный анализ при ошибках RuBERT"""
+        # Упрощенный анализ на ключевых словах
         stop_words = {'опыт', 'работа', 'работы', 'обязанности', 'требования', 'знание', 'навыки'}
-        job_words = re.findall(r'\b[а-яА-Яa-zA-Z]{4,}\b', job_description.lower())
+        job_words = re.findall(r'\b[а-яА-Я]{4,}\b', job_description.lower())
         job_keywords = [word for word in job_words if word not in stop_words]
 
         from collections import Counter
         job_keywords = [word for word, count in Counter(job_keywords).most_common(10)]
 
-        for i, resume in enumerate(resumes):
-            with st.spinner(f"Анализируем резюме {i + 1}/{len(resumes)}..."):
-                resume_text = resume['text'].lower()
+        resume_lower = resume_text.lower()
+        score = 0
+        found_keywords = []
 
-                score = 0
-                found_keywords = []
+        for keyword in job_keywords:
+            if keyword in resume_lower:
+                score += 10
+                found_keywords.append(keyword)
 
-                for keyword in job_keywords:
-                    if keyword in resume_text:
-                        score += 10
-                        found_keywords.append(keyword)
+        # Проверка опыта
+        if re.search(r'опыт.*?\d+.*?(год|лет)', resume_lower):
+            score += 30
 
-                # Проверка опыта
-                if re.search(r'опыт.*?\d+.*?(год|лет)', resume_text):
-                    score += 30
+        # Проверка образования
+        if any(edu in resume_lower for edu in ['высшее', 'образование', 'вуз']):
+            score += 20
 
-                # Проверка образования
-                if any(edu in resume_text for edu in ['высшее', 'образование', 'вуз']):
-                    score += 20
+        analysis_result = {
+            'match_score': min(score, 100),
+            'is_suitable': score >= 40,
+            'strengths': [],
+            'weaknesses': [],
+            'reason': f"Резервный анализ: {score}%"
+        }
 
-                analysis_result = {
-                    'match_score': min(score, 100),
-                    'is_suitable': score >= 40,
-                    'strengths': [],
-                    'weaknesses': [],
-                    'reason': f"Анализ соответствия: {score}%"
-                }
+        if found_keywords:
+            analysis_result['strengths'].append(f"Ключевые слова: {', '.join(found_keywords[:3])}")
 
-                if found_keywords:
-                    analysis_result['strengths'].append(f"Ключевые слова: {', '.join(found_keywords[:3])}")
+        if score < 40:
+            analysis_result['weaknesses'].append("Недостаточное соответствие")
 
-                if score < 40:
-                    analysis_result['weaknesses'].append("Недостаточное соответствие")
-
-                resume['analysis'] = analysis_result
-
-                if analysis_result['is_suitable']:
-                    filtered.append(resume)
-
-        return sorted(filtered, key=lambda x: x['analysis']['match_score'], reverse=True)
+        return analysis_result
 
 
 # Функции для обработки файлов
@@ -283,15 +383,13 @@ def create_interview_link(candidate_data, job_description, hr_email):
         return f"http://localhost:8501/?interview_id={interview_id}"
 
 
-# Определяем тип пользователя
+# ОСНОВНОЙ КОД
 query_params = st.query_params
 is_candidate = 'interview_id' in query_params
 
 if is_candidate:
     # 👤 РЕЖИМ СОИСКАТЕЛЯ
     interview_id = query_params['interview_id'][0]
-
-    # Загружаем данные из БД
     interview_data = interview_db.get_interview(interview_id)
 
     if interview_data:
@@ -305,7 +403,7 @@ if is_candidate:
         st.info(f"**Вакансия:** {job_description[:100]}...")
         st.info(f"**Контакт HR:** {hr_email}")
 
-        # Инициализация бота
+        # Инициализация бота для собеседования
         if 'interview_bot' not in st.session_state:
             st.session_state.interview_bot = InterviewBot(
                 DEEPSEEK_API_KEY,
@@ -321,6 +419,7 @@ if is_candidate:
         # Процесс собеседования
         if st.session_state.current_question < 3:
             if st.session_state.current_question >= len(st.session_state.questions):
+                # Генерируем новый вопрос
                 previous_answer = st.session_state.answers[-1] if st.session_state.answers else None
                 question = bot.generate_question(previous_answer)
                 st.session_state.questions.append(question)
@@ -329,12 +428,14 @@ if is_candidate:
             st.subheader(f"Вопрос {st.session_state.current_question + 1}/3")
             st.info(st.session_state.questions[st.session_state.current_question])
 
+            # Запись ответа
             if st.button("🎤 Записать ответ", key=f"record_{st.session_state.current_question}"):
                 with st.spinner("Запись... (15 секунд)"):
                     audio_file = load_audio(duration=15)
                     answer = recognize_audio_whisper(audio_file)
                     st.session_state.answers[st.session_state.current_question] = answer
 
+                    # Генерируем обратную связь
                     feedback = bot.provide_feedback(
                         st.session_state.questions[st.session_state.current_question],
                         answer
@@ -349,9 +450,11 @@ if is_candidate:
                 st.write(st.session_state.answers[st.session_state.current_question])
 
         else:
+            # Завершение собеседования
             st.success("✅ Собеседование завершено!")
             st.balloons()
 
+            # Генерация отчета
             with st.spinner("Генерируем отчет для HR..."):
                 final_report = bot.generate_final_report(hr_email)
                 interview_data['report'] = final_report
@@ -415,13 +518,13 @@ else:
                     })
                 st.success(f"Загружено {len(uploaded_files)} резюме")
 
-        if st.button("🚀 Начать фильтрацию",
+        if st.button("🚀 Начать AI-фильтрацию",
                      type="primary") and st.session_state.job_description and st.session_state.hr_email and st.session_state.resumes:
-            with st.spinner("Анализируем резюме..."):
-                st.session_state.filtered_candidates = InterviewBot.filter_resumes(
+            with st.spinner("Анализируем резюме с помощью RuBERT-Tiny..."):
+                st.session_state.filtered_candidates = InterviewBot.filter_resumes_with_rubert(
                     st.session_state.resumes, st.session_state.job_description
                 )
-            st.success(f"Найдено {len(st.session_state.filtered_candidates)} подходящих кандидатов")
+            st.success(f"RuBERT-Tiny отобрал {len(st.session_state.filtered_candidates)} подходящих кандидатов")
 
     with tab2:
         st.header("👥 Этап 2: Результаты отбора")
@@ -465,7 +568,7 @@ else:
 
 # Футер
 st.write("---")
-st.caption(f"HR AI Recruiter v1.0 | {'Production' if IS_PRODUCTION else 'Development'}")
+st.caption(f"HR AI Recruiter v1.0 | RuBERT-Tiny | {'Production' if IS_PRODUCTION else 'Development'}")
 
 # Отладочная информация
 if not IS_PRODUCTION:
