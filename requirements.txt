@@ -21,3 +21,4 @@ psycopg2-binary
 sqlalchemy
 pydub
 SpeechRecognition
+subprocess

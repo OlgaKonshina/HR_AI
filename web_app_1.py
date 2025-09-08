@@ -2,6 +2,7 @@ import streamlit as st
 import openai
 import os
 import PyPDF2
+import subprocess
 #import docx
 from io import BytesIO
 #import re
@@ -470,9 +471,31 @@ def extract_text_from_file(file):
 
 def create_interview_link(candidate_data, job_description, hr_email):
     interview_id = str(uuid.uuid4())[:8]
-    interview_link = f"{SITE_URL}/?interview_id={interview_id}"
 
-    # Сохраняем в базу данных вместо session_state
+    # Автоматически определяем текущий IP сервера
+    try:
+        # Команда для определения публичного IP
+        result = subprocess.run([
+            'curl', '-s',
+            'http://169.254.169.254/latest/meta-data/network-interfaces/0/primary-v4-address/one-to-one-nat/address'
+        ], capture_output=True, text=True, timeout=10)
+
+        if result.returncode == 0:
+            current_ip = result.stdout.strip()
+            interview_link = f"http://{current_ip}:8501/?interview_id={interview_id}"
+        else:
+            # Fallback: используем определение IP через API
+            result = subprocess.run([
+                'curl', '-s', 'https://api.ipify.org'
+            ], capture_output=True, text=True, timeout=10)
+            current_ip = result.stdout.strip() if result.returncode == 0 else "158.160.117.228"
+            interview_link = f"http://{current_ip}:8501/?interview_id={interview_id}"
+
+    except Exception as e:
+        # Резервный вариант на случай ошибок
+        interview_link = f"http://158.160.117.228:8501/?interview_id={interview_id}"
+
+    # Сохраняем в базу данных
     if st.session_state.get('db_session'):
         success = create_interview_in_db(
             st.session_state.db_session,
