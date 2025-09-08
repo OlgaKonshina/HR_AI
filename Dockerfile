@@ -22,4 +22,4 @@ RUN mkdir -p audio/questions audio/answers
 EXPOSE 8501
 
 # Запускаем Streamlit
-CMD ["streamlit", "run", "app_streamlit.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "app_5.py", "--server.port=8501", "--server.address=0.0.0.0"]
