@@ -18,7 +18,6 @@ from pathlib import Path
 import pandas as pd
 import docx
 from striprtf.striprtf import rtf_to_text
-import fitz  # PyMuPDF
 from transformers import AutoTokenizer, AutoModel
 import torch
 import torch.nn.functional as F
