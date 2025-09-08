@@ -2,25 +2,25 @@ import streamlit as st
 import openai
 import os
 import PyPDF2
-import docx
+#import docx
 from io import BytesIO
-import re
+#import re
 import uuid
-from datetime import datetime
+#from datetime import datetime
 from audio_text import text_to_ogg, recognize_audio_whisper
 from audio_recording import load_audio
 from config import DEEPSEEK_API_KEY, SITE_URL, SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, HR_EMAIL_SIGNATURE
 import sys
-from pathlib import Path
-import json
+#from pathlib import Path
+#import json
 import re
 from pathlib import Path
-import pandas as pd
+#import pandas as pd
 import docx
-from striprtf.striprtf import rtf_to_text
-from transformers import AutoTokenizer, AutoModel
+#from striprtf.striprtf import rtf_to_text
+#from transformers import AutoTokenizer, AutoModel
 import torch
-import torch.nn.functional as F
+#import torch.nn.functional as F
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
