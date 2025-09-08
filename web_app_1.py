@@ -78,12 +78,20 @@ st.set_page_config(
 # Глобальное хранилище
 # Инициализация базы данных
 if 'db_initialized' not in st.session_state:
-    st.session_state.db_engine = init_db()
-    st.session_state.db_initialized = True
-    if st.session_state.db_engine:
-        st.session_state.db_session = get_session(st.session_state.db_engine)
-    else:
-        st.error("❌ Не удалось подключиться к базе данных. Некоторые функции могут быть недоступны.")
+    try:
+        st.session_state.db_engine = init_db()
+        st.session_state.db_initialized = True
+        if st.session_state.db_engine:
+            st.session_state.db_session = get_session(st.session_state.db_engine)
+            st.sidebar.success("✅ База данных подключена")
+        else:
+            st.sidebar.error("❌ Не удалось подключиться к базе данных")
+            # Создаем заглушку для сессии
+            st.session_state.db_session = None
+    except Exception as e:
+        st.sidebar.error(f"❌ Ошибка инициализации БД: {e}")
+        st.session_state.db_session = None
+        st.session_state.db_initialized = True
 if 'job_description' not in st.session_state:
     st.session_state.job_description = ""
 if 'hr_email' not in st.session_state:
