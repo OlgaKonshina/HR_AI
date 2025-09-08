@@ -16,19 +16,22 @@ import sys
 import torch
 import torch.nn.functional as F
 
-# Отладочная информация
-st.write(f"Streamlit version: {st.__version__}")
+# Настройка страницы
+st.set_page_config(
+    page_title="HR Бот - AI Recruiter",
+    page_icon="🎯",
+    layout="wide"
+)
+def get_query_params():
+    """Универсальное получение query parameters"""
+    import streamlit as st
+    if hasattr(st, 'query_params'):
+        return st.query_params
+    else:
+        return st.experimental_get_query_params()
 
-# Универсальный метод для query params
-try:
-    # Пробуем новый метод
-    query_params = st.query_params
-    st.write("Using st.query_params (new method)")
-except AttributeError:
-    # Fallback на старый метод
-    query_params = st.experimental_get_query_params()
-    st.write("Using experimental_get_query_params (old method)")
-
+# Используйте так:
+query_params = get_query_params()
 is_candidate = 'interview_id' in query_params
 
 # Добавляем путь для импортов
@@ -60,13 +63,6 @@ IS_PRODUCTION = os.getenv('IS_PRODUCTION', 'False').lower() == 'true'
 
 # Модель для русскоязычных embeddings
 RU_BERT_MODEL = "cointegrated/rubert-tiny2"
-
-# Настройка страницы
-st.set_page_config(
-    page_title="HR Бот - AI Recruiter",
-    page_icon="🎯",
-    layout="wide"
-)
 
 # База данных интервью
 INTERVIEWS_DB = "interviews_db.json"
