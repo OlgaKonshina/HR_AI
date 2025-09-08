@@ -1,4 +1,30 @@
 import streamlit as st
+
+# Настройка страницы
+st.set_page_config(
+    page_title="HR Бот - AI Recruiter",
+    page_icon="🎯",
+    layout="wide"
+)
+
+# Проверка версии и возможностей
+st.write(f"Streamlit version: {st.__version__}")
+st.write(f"Has query_params: {hasattr(st, 'query_params')}")
+
+# Универсальная функция
+def get_query_params():
+    """Универсальное получение query parameters"""
+    if hasattr(st, 'query_params'):
+        st.write("✅ Using st.query_params")
+        return st.query_params
+    else:
+        st.write("⚠️ Using experimental_get_query_params")
+        return st.experimental_get_query_params()
+
+# Получаем параметры
+query_params = get_query_params()
+is_candidate = 'interview_id' in query_params
+
 import openai
 import time
 import json
@@ -16,23 +42,6 @@ import sys
 import torch
 import torch.nn.functional as F
 
-# Настройка страницы
-st.set_page_config(
-    page_title="HR Бот - AI Recruiter",
-    page_icon="🎯",
-    layout="wide"
-)
-def get_query_params():
-    """Универсальное получение query parameters"""
-    import streamlit as st
-    if hasattr(st, 'query_params'):
-        return st.query_params
-    else:
-        return st.experimental_get_query_params()
-
-# Используйте так:
-query_params = get_query_params()
-is_candidate = 'interview_id' in query_params
 
 # Добавляем путь для импортов
 sys.path.append(str(Path(__file__).parent))
