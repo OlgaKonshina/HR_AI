@@ -4,12 +4,18 @@ from sqlalchemy import create_engine, Column, String, Text, DateTime, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
-from config import DATABASE_URL
 import logging
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Импортируем DATABASE_URL из config
+try:
+    from config import DATABASE_URL
+except ImportError:
+    logger.error("Не удалось импортировать DATABASE_URL из config")
+    DATABASE_URL = None
 
 Base = declarative_base()
 
@@ -35,13 +41,13 @@ def init_db():
             logger.error("DATABASE_URL не настроен")
             return None
 
-        logger.info(f"Подключаемся к БД: {DATABASE_URL[:30]}...")
+        logger.info(f"Подключаемся к БД: {DATABASE_URL[:30]}...")  # Логируем только начало URL
 
-        engine = create_engine(DATABASE_URL, pool_size=5, max_overflow=0)
+        engine = create_engine(DATABASE_URL)
 
         # Проверяем соединение
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            logger.info("✅ Успешное подключение к БД")
 
         Base.metadata.create_all(engine)
         logger.info("✅ Таблицы БД созданы/проверены")
@@ -53,7 +59,7 @@ def init_db():
 
 
 def get_session(engine):
-    """Создает сессию для работы с БД - ДОБАВЬТЕ ЭТУ ФУНКЦИЮ"""
+    """Создает сессию для работы с БД"""
     if not engine:
         logger.error("Движок БД не предоставлен")
         return None
@@ -135,21 +141,3 @@ def update_interview_report(session, interview_id, report):
         session.rollback()
         logger.error(f"❌ Ошибка обновления отчета: {e}")
         return False
-
-
-def cleanup_expired_interviews(session):
-    """Очищает просроченные интервью"""
-    if not session:
-        return 0
-    try:
-        expired_count = session.query(Interview).filter(
-            Interview.expires_at < datetime.utcnow(),
-            Interview.status != 'expired'
-        ).update({'status': 'expired'})
-
-        session.commit()
-        return expired_count
-    except Exception as e:
-        session.rollback()
-        logger.error(f"❌ Ошибка очистки просроченных интервью: {e}")
-        return 0
