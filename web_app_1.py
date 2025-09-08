@@ -79,17 +79,23 @@ st.set_page_config(
 # Инициализация базы данных
 if 'db_initialized' not in st.session_state:
     try:
-        st.session_state.db_engine = init_db()
-        st.session_state.db_initialized = True
-        if st.session_state.db_engine:
-            st.session_state.db_session = get_session(st.session_state.db_engine)
-            st.sidebar.success("✅ База данных подключена")
+        # Простая проверка без сложной логики
+        if DATABASE_URL:
+            st.session_state.db_engine = init_db()
+            if st.session_state.db_engine:
+                st.session_state.db_session = get_session(st.session_state.db_engine)
+                st.sidebar.success("✅ База данных подключена")
+            else:
+                st.session_state.db_session = None
+                st.sidebar.warning("⚠️ База данных в режиме заглушки")
         else:
-            st.sidebar.error("❌ Не удалось подключиться к базе данных")
-            # Создаем заглушку для сессии
             st.session_state.db_session = None
+            st.sidebar.warning("⚠️ DATABASE_URL не настроен")
+
+        st.session_state.db_initialized = True
+
     except Exception as e:
-        st.sidebar.error(f"❌ Ошибка инициализации БД: {e}")
+        st.sidebar.error(f"❌ Ошибка БД: {e}")
         st.session_state.db_session = None
         st.session_state.db_initialized = True
 if 'job_description' not in st.session_state:
