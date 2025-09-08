@@ -2,15 +2,21 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости
+# Устанавливаем компилятор и системные зависимости
 RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    make \
     libportaudio2 \
-    python3-pyaudio \
+    portaudio19-dev \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Копируем код
 COPY . .
@@ -18,7 +24,6 @@ COPY . .
 # Создаем директории для аудио
 RUN mkdir -p audio/questions audio/answers
 
-# Открываем порт
 EXPOSE 8501
 
 # Запускаем Streamlit
