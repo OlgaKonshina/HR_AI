@@ -1,4 +1,5 @@
 import streamlit as st
+from importlib.metadata import version, PackageNotFoundError
 
 # Настройка страницы
 st.set_page_config(
@@ -7,6 +8,22 @@ st.set_page_config(
     layout="wide"
 )
 
+try:
+    # Точная версия из metadata
+    actual_version = version('streamlit')
+    st.write(f"Metadata version: {actual_version}")
+    st.write(f"Module version: {st.__version__}")
+    st.write(f"Are they equal: {actual_version == st.__version__}")
+
+except PackageNotFoundError:
+    st.write("Package not found in metadata")
+    st.write(f"Module version: {st.__version__}")
+
+# Проверим все атрибуты
+import inspect
+
+all_attrs = [attr for attr in dir(st) if not attr.startswith('_')]
+st.write(f"All Streamlit attributes: {all_attrs}")
 # Проверка версии и возможностей
 st.write(f"Streamlit version: {st.__version__}")
 st.write(f"Has query_params: {hasattr(st, 'query_params')}")
