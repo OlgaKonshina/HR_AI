@@ -2,7 +2,7 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Устанавливаем компилятор и системные зависимости
+# Устанавливаем системные зависимости включая PostgreSQL клиент
 RUN apt-get update && apt-get install -y \
     build-essential \
     gcc \
@@ -11,9 +11,10 @@ RUN apt-get update && apt-get install -y \
     libportaudio2 \
     portaudio19-dev \
     python3-dev \
+    libpq-dev \  # Добавляем для работы с PostgreSQL
     && rm -rf /var/lib/apt/lists/*
 
-# зависимости
+# Копируем зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
@@ -27,4 +28,4 @@ RUN mkdir -p audio/questions audio/answers
 EXPOSE 8501
 
 # Запускаем Streamlit
-CMD ["streamlit", "run", "app_5.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "web_app_1.py", "--server.port=8501", "--server.address=0.0.0.0"]

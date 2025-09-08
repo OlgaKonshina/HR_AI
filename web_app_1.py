@@ -9,10 +9,9 @@ import uuid
 from datetime import datetime
 from audio_text import text_to_ogg, recognize_audio_whisper
 from audio_recording import load_audio
-from config import DEEPSEEK_API_KEY
+from config import DEEPSEEK_API_KEY, SITE_URL, SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, HR_EMAIL_SIGNATURE
 import sys
 from pathlib import Path
-
 import json
 import re
 from pathlib import Path
@@ -26,31 +25,25 @@ import torch.nn.functional as F
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from config import SITE_URL, SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, HR_EMAIL_SIGNATURE
+from database import init_db, get_session, create_interview_in_db, get_interview_from_db, update_interview_report
 
 # Добавляем путь к текущей директории для импорта document_processor
 sys.path.append(str(Path(__file__).parent))
 
 # Импортируем из внешнего файла
-# Измените импорт и настройки в app_streamlit.py
 try:
     from document_processor import DocumentReader, extract_job_title
 
-    # Пробуем импортировать get_embedding с правильным указанием модели
     try:
         from document_processor import get_embedding
 
         print("✅ get_embedding импортирован успешно!")
-
-        # Тестируем с правильной моделью для русского языка
         try:
-            # Используем русскоязычную модель
             test_embedding = get_embedding("тест", "cointegrated/rubert-tiny2")
             print("✅ RuBERT-Tiny модель работает!")
             DOCUMENT_PROCESSOR_AVAILABLE = True
         except Exception as e:
             print(f"⚠️ RuBERT-Tiny не доступна: {e}")
-            # Пробуем альтернативную модель
             try:
                 test_embedding = get_embedding("тест", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
                 print("✅ Multilingual модель работает!")
@@ -58,15 +51,12 @@ try:
             except Exception as e2:
                 print(f"❌ Все модели не работают: {e2}")
                 DOCUMENT_PROCESSOR_AVAILABLE = False
-
     except Exception as e:
         print(f"❌ Ошибка импорта get_embedding: {e}")
         DOCUMENT_PROCESSOR_AVAILABLE = False
-
 except ImportError as e:
     print(f"❌ Основной импорт не удался: {e}")
     DOCUMENT_PROCESSOR_AVAILABLE = False
-
 
 # Дополнительные импорты для поддержки разных форматов
 try:
@@ -87,8 +77,14 @@ st.set_page_config(
 )
 
 # Глобальное хранилище
-if 'interviews' not in st.session_state:
-    st.session_state.interviews = {}
+# Инициализация базы данных
+if 'db_initialized' not in st.session_state:
+    st.session_state.db_engine = init_db()
+    st.session_state.db_initialized = True
+    if st.session_state.db_engine:
+        st.session_state.db_session = get_session(st.session_state.db_engine)
+    else:
+        st.error("❌ Не удалось подключиться к базе данных. Некоторые функции могут быть недоступны.")
 if 'job_description' not in st.session_state:
     st.session_state.job_description = ""
 if 'hr_email' not in st.session_state:
@@ -97,6 +93,117 @@ if 'resumes' not in st.session_state:
     st.session_state.resumes = []
 if 'filtered_candidates' not in st.session_state:
     st.session_state.filtered_candidates = []
+
+
+# Функция для извлечения email из текста
+def extract_email_from_text(text):
+    """Пытается найти и извлечь email адрес из текста резюме."""
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    match = re.search(email_pattern, text)
+    if match:
+        return match.group(0)
+    return None
+
+
+# Функция для отправки email через Яндекс
+def send_interview_invitation(candidate_email, candidate_name, interview_link, hr_email):
+    """Отправляет письмо с приглашением на собеседование кандидату через Яндекс.Почту."""
+
+    subject = f"Приглашение на собеседование в AI Recruiter System"
+
+    html_body = f"""
+    <html>
+      <head>
+        <style>
+          body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+          .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+          .header {{ background-color: #ffcc00; padding: 20px; text-align: center; color: #000; }}
+          .content {{ padding: 20px; background-color: #f9f9f9; }}
+          .button {{ display: inline-block; padding: 12px 24px; background-color: #ffcc00; 
+                    color: #000; text-decoration: none; border-radius: 5px; font-weight: bold; }}
+          .footer {{ padding: 20px; text-align: center; font-size: 12px; color: #666; }}
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h2>🎯 Приглашение на собеседование</h2>
+          </div>
+          <div class="content">
+            <p>Здравствуйте, <strong>{candidate_name}</strong>!</p>
+            <p>Благодарим Вас за проявленный интерес к нашей компании и отправленное резюме.</p>
+            <p>Мы были впечатлены Вашим опытом и приглашаем Вас на следующий этап отбора — <strong>интервью с нашим AI-ассистентом Львом</strong>.</p>
+
+            <p><strong>📋 Информация о собеседовании:</strong></p>
+            <ul>
+              <li>🎯 <strong>Формат:</strong> Онлайн-собеседование с AI-ассистентом</li>
+              <li>📅 <strong>Срок:</strong> Ссылка действительна 7 дней</li>
+              <li>⏰ <strong>Время:</strong> В любое удобное для Вас время</li>
+              <li>💻 <strong>Требования:</strong> Компьютер с микрофоном и стабильный интернет</li>
+              <li>⏱️ <strong>Длительность:</strong>约30-40 минут</li>
+            </ul>
+
+            <p style="text-align: center; margin: 30px 0;">
+              <a href="{interview_link}" class="button">🎤 Начать собеседование</a>
+            </p>
+
+            <p>Или скопируйте ссылку вручную:<br>
+            <code>{interview_link}</code></p>
+
+            <p>Это автоматизированное интервью поможет нам лучше узнать Ваши навыки и опыт.</p>
+
+            <p>Если возникнут технические трудности, пожалуйста, свяжитесь с нами:<br>
+            <strong>Email:</strong> <a href="mailto:{hr_email}">{hr_email}</a></p>
+          </div>
+          <div class="footer">
+            <p>Это письмо отправлено автоматически. Пожалуйста, не отвечайте на него.</p>
+            <p>{HR_EMAIL_SIGNATURE}</p>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    text_body = f"""
+    Приглашение на собеседование
+
+    Здравствуйте, {candidate_name}!
+
+    Благодарим Вас за проявленный интерес и отправленное резюме.
+    Мы приглашаем Вас на онлайн-собеседование с нашим AI-ассистентом Львом.
+
+    Ссылка для прохождения: {interview_link}
+    Ссылка действительна в течение 7 дней.
+
+    Требования: компьютер с микрофоном.
+
+    По вопросам обращайтесь: {hr_email}
+
+    {HR_EMAIL_SIGNATURE}
+    """
+
+    msg = MIMEMultipart("alternative")
+    msg['Subject'] = subject
+    msg['From'] = SMTP_USERNAME
+    msg['To'] = candidate_email
+
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.sendmail(SMTP_USERNAME, candidate_email, msg.as_string())
+        return True
+    except smtplib.SMTPAuthenticationError:
+        st.error("Ошибка авторизации: проверьте логин и пароль приложения Яндекс")
+        return False
+    except Exception as e:
+        st.error(f"Ошибка отправки письма: {e}")
+        return False
 
 
 class InterviewBot:
@@ -126,7 +233,6 @@ class InterviewBot:
         return response.choices[0].message.content
 
     def provide_feedback(self, question, answer):
-        """Дает обратную связь по ответу на вопрос"""
         feedback_prompt = f"""
         Проанализируй ответ кандидата на вопрос собеседования.
 
@@ -143,7 +249,8 @@ class InterviewBot:
         response = self.client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "Ты опытный HR-специалист. Дай конструктивную обратную связь по ответам на собеседовании."},
+                {"role": "system",
+                 "content": "Ты опытный HR-специалист. Дай конструктивную обратную связь по ответам на собеседовании."},
                 {"role": "user", "content": feedback_prompt},
             ],
             stream=False
@@ -188,7 +295,6 @@ class InterviewBot:
 
     @staticmethod
     def filter_resumes_with_embeddings(resumes, job_description):
-        """Фильтрация резюме с использованием embeddings"""
         if not DOCUMENT_PROCESSOR_AVAILABLE:
             st.error("Модуль document_processor не доступен. Используется резервный метод.")
             return InterviewBot.filter_resumes_fallback(resumes, job_description)
@@ -204,12 +310,9 @@ class InterviewBot:
                     try:
                         resume_short = resume['text'][:1000]
                         resume_emb = get_embedding(resume_short, model_path)
-
-                        # Вычисляем косинусную схожесть
                         similarity_tensor = torch.nn.functional.cosine_similarity(resume_emb, job_emb)
                         similarity = similarity_tensor.item() * 100
 
-                        # Создаем анализ результата
                         analysis_result = {
                             'match_score': round(similarity, 1),
                             'is_suitable': similarity >= 40,
@@ -228,7 +331,6 @@ class InterviewBot:
 
                     except Exception as e:
                         st.error(f"Ошибка анализа резюме {resume['name']}: {str(e)}")
-                        # Резервный анализ при ошибке
                         analysis_result = {
                             'match_score': 50,
                             'is_suitable': True,
@@ -247,12 +349,8 @@ class InterviewBot:
 
     @staticmethod
     def filter_resumes_fallback(resumes, job_description):
-        """Резервный метод фильтрации без embeddings"""
         filtered = []
-
-        # Извлекаем ключевые слова из вакансии
         job_keywords = InterviewBot._extract_keywords(job_description)
-
         st.write(f"🔑 **Ключевые слова вакансии:** {', '.join(job_keywords[:10])}")
 
         for i, resume in enumerate(resumes):
@@ -267,25 +365,21 @@ class InterviewBot:
 
     @staticmethod
     def _extract_keywords(text):
-        """Извлекает ключевые слова из текста"""
         stop_words = {'опыт', 'работа', 'работы', 'обязанности', 'требования', 'знание', 'навыки'}
         words = re.findall(r'\b[a-zA-Zа-яА-Я]{4,}\b', text.lower())
         keywords = [word for word in words if word not in stop_words]
-
         from collections import Counter
         keyword_counts = Counter(keywords)
         return [word for word, count in keyword_counts.most_common(20)]
 
     @staticmethod
     def _analyze_resume_fallback(resume_text, job_description, job_keywords=None):
-        """Резервный анализ резюме"""
         if job_keywords is None:
             job_keywords = InterviewBot._extract_keywords(job_description)
 
         resume_lower = resume_text.lower()
         job_lower = job_description.lower()
 
-        # Простой scoring на основе ключевых слов
         score = 0
         found_keywords = []
 
@@ -294,13 +388,11 @@ class InterviewBot:
                 score += 3
                 found_keywords.append(keyword)
 
-        # Проверяем опыт работы
         experience_match = re.search(r'опыт работы.*?(\d+)[^\d]*лет', resume_lower)
         if experience_match:
             years = int(experience_match.group(1))
             score += min(years * 2, 10)
 
-        # Нормализуем score
         max_score = len(job_keywords) * 3 + 10
         match_score = min(int((score / max_score) * 100), 100) if max_score > 0 else 0
 
@@ -324,156 +416,170 @@ class InterviewBot:
         }
 
 
-# Функции для обработки файлов разных форматов
+# Функции для обработки файлов
 def extract_text_from_file(file):
-    """Извлекает текст из файлов разных форматов"""
     try:
-        # Используем DocumentReader из внешнего модуля если доступен
         if DOCUMENT_PROCESSOR_AVAILABLE:
             try:
-                # Сохраняем временный файл для обработки
                 import tempfile
                 with tempfile.NamedTemporaryFile(delete=False, suffix=file.name) as tmp:
                     tmp.write(file.read())
                     tmp_path = tmp.name
-
                 reader = DocumentReader(tmp_path)
                 text = reader.extract_text()
-
-                # Удаляем временный файл
                 os.unlink(tmp_path)
                 return text
-
             except Exception as e:
                 st.warning(f"DocumentReader не смог обработать файл: {e}. Используем резервный метод.")
 
-        # Резервный метод обработки файлов
-        # PDF
         if file.type == "application/pdf":
             pdf_reader = PyPDF2.PdfReader(file)
             text = ""
             for page in pdf_reader.pages:
                 text += page.extract_text() + "\n"
             return text
-
-        # Word DOCX
         elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             doc = docx.Document(BytesIO(file.read()))
             text = ""
             for paragraph in doc.paragraphs:
                 text += paragraph.text + "\n"
             return text
-
-        # Текстовые файлы
         elif file.type == "text/plain":
             return file.read().decode("utf-8", errors='ignore')
-
         else:
-            # Пробуем прочитать как текст
             try:
                 return file.read().decode("utf-8", errors='ignore')
             except:
                 return f"Формат файла {file.name} не поддерживается"
-
     except Exception as e:
         return f"Ошибка чтения файла {file.name}: {str(e)}"
 
 
 def create_interview_link(candidate_data, job_description, hr_email):
-    """Создает уникальную ссылку для собеседования"""
     interview_id = str(uuid.uuid4())[:8]
+    interview_link = f"{SITE_URL}/?interview_id={interview_id}"
 
-    st.session_state.interviews[interview_id] = {
-        'candidate': candidate_data,
-        'job_description': job_description,
-        'hr_email': hr_email,
-        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M"),
-        'status': 'pending'
-    }
+    # Сохраняем в базу данных вместо session_state
+    if st.session_state.get('db_session'):
+        success = create_interview_in_db(
+            st.session_state.db_session,
+            interview_id,
+            candidate_data,
+            job_description,
+            hr_email,
+            interview_link
+        )
+        if not success:
+            st.error("❌ Не удалось сохранить интервью в базе данных")
+            return None
 
-    return f"http://localhost:8501/?interview_id={interview_id}"
+    return interview_link
 
 
-# Определяем тип пользователя по query parameters
+# Определяем тип пользователя
 query_params = st.query_params
 is_candidate = 'interview_id' in query_params
 
 if is_candidate:
-    # 👤 РЕЖИМ СОИСКАТЕЛЯ - ЭТАП 3
     interview_id = query_params['interview_id'][0]
 
-    if interview_id in st.session_state.interviews:
-        interview_data = st.session_state.interviews[interview_id]
-        candidate = interview_data['candidate']
-        job_description = interview_data['job_description']
-        hr_email = interview_data['hr_email']
+    # Получаем данные из базы данных вместо session_state
+    interview_data = None
+    candidate = None
+    job_description = None
+    hr_email = None
 
+    if st.session_state.get('db_session'):
+        interview_db = get_interview_from_db(st.session_state.db_session, interview_id)
+        if interview_db:
+            interview_data = {
+                'candidate': interview_db.candidate_data,
+                'job_description': interview_db.job_description,
+                'hr_email': interview_db.hr_email,
+                'status': interview_db.status,
+                'interview_link': interview_db.interview_link
+            }
+            candidate = interview_db.candidate_data
+            job_description = interview_db.job_description
+            hr_email = interview_db.hr_email
+
+    if interview_data and interview_data['status'] != 'expired':
         st.title("🎤 Техническое собеседование")
         st.write("Добро пожаловать на онлайн-собеседование!")
-
         st.info(f"**Вакансия:** {job_description[:100]}...")
         st.info(f"**Контакт HR:** {hr_email}")
 
-        # Инициализация бота для собеседования
-        if 'interview_bot' not in st.session_state:
-            st.session_state.interview_bot = InterviewBot(
+        # Используем ID интервью для уникальности сессии бота
+        bot_session_key = f'interview_bot_{interview_id}'
+        questions_key = f'questions_{interview_id}'
+        answers_key = f'answers_{interview_id}'
+        current_question_key = f'current_question_{interview_id}'
+
+        if bot_session_key not in st.session_state:
+            st.session_state[bot_session_key] = InterviewBot(
                 DEEPSEEK_API_KEY,
                 job_description,
                 candidate['text']
             )
-            st.session_state.current_question = 0
-            st.session_state.questions = []
-            st.session_state.answers = []
+            st.session_state[current_question_key] = 0
+            st.session_state[questions_key] = []
+            st.session_state[answers_key] = []
 
-        bot = st.session_state.interview_bot
+        bot = st.session_state[bot_session_key]
+        current_question = st.session_state[current_question_key]
+        questions = st.session_state[questions_key]
+        answers = st.session_state[answers_key]
 
-        # Процесс собеседования
-        if st.session_state.current_question < 3:
-            if st.session_state.current_question >= len(st.session_state.questions):
-                # Генерируем новый вопрос
-                previous_answer = st.session_state.answers[-1] if st.session_state.answers else None
+        if current_question < 3:
+            if current_question >= len(questions):
+                previous_answer = answers[-1] if answers else None
                 question = bot.generate_question(previous_answer)
-                st.session_state.questions.append(question)
-                st.session_state.answers.append("")
+                questions.append(question)
+                answers.append("")
 
-            st.subheader(f"Вопрос {st.session_state.current_question + 1}/3")
-            st.info(st.session_state.questions[st.session_state.current_question])
+            st.subheader(f"Вопрос {current_question + 1}/3")
+            st.info(questions[current_question])
 
-            # Запись ответа
-            if st.button("🎤 Записать ответ", key=f"record_{st.session_state.current_question}"):
+            if st.button("🎤 Записать ответ", key=f"record_{interview_id}_{current_question}"):
                 with st.spinner("Запись... (15 секунд)"):
                     audio_file = load_audio(duration=15)
                     answer = recognize_audio_whisper(audio_file)
-                    st.session_state.answers[st.session_state.current_question] = answer
-
-                    # Генерируем обратную связь
+                    answers[current_question] = answer
                     feedback = bot.provide_feedback(
-                        st.session_state.questions[st.session_state.current_question],
+                        questions[current_question],
                         answer
                     )
                     bot.feedbacks.append(feedback)
-
-                    st.session_state.current_question += 1
+                    st.session_state[current_question_key] += 1
                     st.rerun()
 
-            if st.session_state.answers[st.session_state.current_question]:
+            if answers[current_question]:
                 st.write("**Ваш ответ:**")
-                st.write(st.session_state.answers[st.session_state.current_question])
-
+                st.write(answers[current_question])
         else:
-            # Завершение собеседования
             st.success("✅ Собеседование завершено!")
             st.balloons()
-
-            # Генерация отчета
             with st.spinner("Генерируем отчет для HR..."):
                 final_report = bot.generate_final_report(hr_email)
-                interview_data['report'] = final_report
-                interview_data['status'] = 'completed'
+
+                # Сохраняем отчет в базу данных
+                if st.session_state.get('db_session'):
+                    update_interview_report(st.session_state.db_session, interview_id, final_report)
 
                 st.subheader("📋 Отчет отправлен HR")
                 st.write(f"Результаты собеседования отправлены на email: **{hr_email}**")
                 st.write("С вами свяжутся в ближайшее время!")
+
+                # Очищаем сессию собеседования
+                del st.session_state[bot_session_key]
+                del st.session_state[questions_key]
+                del st.session_state[answers_key]
+                del st.session_state[current_question_key]
+
+    elif interview_data and interview_data['status'] == 'expired':
+        st.error("❌ Ссылка на собеседование истекла (действительна 7 дней)")
+        st.write("Пожалуйста, свяжитесь с HR для получения новой ссылки")
+        st.info(f"Контакт HR: {hr_email}")
 
     else:
         st.error("❌ Неверная ссылка на собеседование")
@@ -499,6 +605,12 @@ else:
 
         if not DOCUMENT_PROCESSOR_AVAILABLE:
             st.warning("⚠️ Расширенная обработка файлов недоступна")
+
+        # Информация о базе данных
+        if st.session_state.get('db_engine'):
+            st.success("✅ База данных подключена")
+        else:
+            st.error("❌ База данных не подключена")
 
     tab1, tab2 = st.tabs(["📁 Этап 1: Загрузка", "👥 Этап 2: Отбор"])
 
@@ -564,7 +676,7 @@ else:
                 for fmt, count in format_stats.items():
                     st.write(f"• {fmt}: {count} файлов")
 
-        # ИСПОЛЬЗУЕМ ФИЛЬТРАЦИЮ ИЗ DOCUMENT_PROCESSOR
+        # Кнопка запуска AI-фильтрации
         if st.button("🚀 Начать AI-фильтрацию",
                      type="primary") and st.session_state.job_description and st.session_state.hr_email and st.session_state.resumes:
             with st.spinner("AI анализирует резюме с помощью embeddings..."):
@@ -605,17 +717,42 @@ else:
                         st.write("**📝 Обоснование:**")
                         st.write(analysis.get('reason', 'Нет данных'))
 
-                        if st.button(f"📧 Отправить приглашение", key=f"invite_{i}"):
+                    # Извлечение email и отправка приглашения
+                    candidate_text = candidate['text']
+                    extracted_email = extract_email_from_text(candidate_text)
+                    candidate_name = candidate['name'].split('.')[0]  # Простое извлечение имени
+
+                    if extracted_email:
+                        email_to_send = st.text_input("Email кандидата:", value=extracted_email, key=f"email_{i}")
+                    else:
+                        email_to_send = st.text_input("Email кандидата (не найден в резюме):", key=f"email_{i}")
+
+                    if st.button(f"📧 Отправить приглашение", key=f"invite_{i}"):
+                        if not email_to_send:
+                            st.error("Поле email не может быть пустым.")
+                        else:
                             interview_link = create_interview_link(
                                 candidate, st.session_state.job_description, st.session_state.hr_email
                             )
 
-                            st.success("✅ Ссылка на собеседование создана!")
-                            st.text_area("Скопируйте ссылку для кандидата:", interview_link)
+                            if interview_link:  # Проверяем что ссылка создалась успешно
+                                with st.spinner("Отправляем приглашение на email..."):
+                                    email_sent = send_interview_invitation(
+                                        email_to_send, candidate_name, interview_link, st.session_state.hr_email
+                                    )
+
+                                if email_sent:
+                                    st.success("✅ Приглашение отправлено на email кандидата!")
+                                    st.balloons()
+                                else:
+                                    st.error(
+                                        "❌ Не удалось отправить email. Проверьте настройки SMTP или попробуйте позже.")
+                                    st.info("**Ссылка для собеседования (скопируйте и отправьте вручную):**")
+                                    st.code(interview_link, language=None)
+                            else:
+                                st.error("❌ Не удалось создать ссылку для собеседования")
 
                     st.write("**📄 Превью резюме:**")
                     st.text(candidate['text'][:300] + "..." if len(candidate['text']) > 300 else candidate['text'])
-
-# Футер
 st.write("---")
-st.caption("AI Recruiter System v5.0 | Качественный отбор")
+st.caption("AI Recruiter System v5.0 | Mindshift")

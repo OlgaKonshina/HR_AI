@@ -6,6 +6,7 @@ whisper==1.1.10
 requests==2.31.0
 transformers==4.34.0
 torch==2.0.1
+torchaudio
 sentence-transformers==2.2.2
 pyaudio==0.2.11
 sounddevice==0.4.6
@@ -15,3 +16,7 @@ striprtf==0.0.25
 beautifulsoup4==4.12.2
 odfpy==1.4.1
 pygame==2.5.0
+psycopg2-binary
+sqlalchemy
+pydub
+SpeechRecognition

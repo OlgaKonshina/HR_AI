@@ -1,47 +1,4 @@
 import streamlit as st
-from importlib.metadata import version, PackageNotFoundError
-
-# Настройка страницы
-st.set_page_config(
-    page_title="HR Бот - AI Recruiter",
-    page_icon="🎯",
-    layout="wide"
-)
-
-try:
-    # Точная версия из metadata
-    actual_version = version('streamlit')
-    st.write(f"Metadata version: {actual_version}")
-    st.write(f"Module version: {st.__version__}")
-    st.write(f"Are they equal: {actual_version == st.__version__}")
-
-except PackageNotFoundError:
-    st.write("Package not found in metadata")
-    st.write(f"Module version: {st.__version__}")
-
-# Проверим все атрибуты
-import inspect
-
-all_attrs = [attr for attr in dir(st) if not attr.startswith('_')]
-st.write(f"All Streamlit attributes: {all_attrs}")
-# Проверка версии и возможностей
-st.write(f"Streamlit version: {st.__version__}")
-st.write(f"Has query_params: {hasattr(st, 'query_params')}")
-
-# Универсальная функция
-def get_query_params():
-    """Универсальное получение query parameters"""
-    if hasattr(st, 'query_params'):
-        st.write("✅ Using st.query_params")
-        return st.query_params
-    else:
-        st.write("⚠️ Using experimental_get_query_params")
-        return st.experimental_get_query_params()
-
-# Получаем параметры
-query_params = get_query_params()
-is_candidate = 'interview_id' in query_params
-
 import openai
 import time
 import json
@@ -59,6 +16,12 @@ import sys
 import torch
 import torch.nn.functional as F
 
+# Настройка страницы
+st.set_page_config(
+    page_title="HR Бот - AI Recruiter",
+    page_icon="🎯",
+    layout="wide"
+)
 
 # Добавляем путь для импортов
 sys.path.append(str(Path(__file__).parent))
@@ -71,7 +34,6 @@ except ImportError:
     # Заглушки для веб-версии
     def text_to_ogg(*args, **kwargs):
         return True
-
 
     def recognize_audio_whisper(*args, **kwargs):
         return "Тестовый ответ"
