@@ -16,6 +16,21 @@ import sys
 import torch
 import torch.nn.functional as F
 
+# Отладочная информация
+st.write(f"Streamlit version: {st.__version__}")
+
+# Универсальный метод для query params
+try:
+    # Пробуем новый метод
+    query_params = st.query_params
+    st.write("Using st.query_params (new method)")
+except AttributeError:
+    # Fallback на старый метод
+    query_params = st.experimental_get_query_params()
+    st.write("Using experimental_get_query_params (old method)")
+
+is_candidate = 'interview_id' in query_params
+
 # Добавляем путь для импортов
 sys.path.append(str(Path(__file__).parent))
 
