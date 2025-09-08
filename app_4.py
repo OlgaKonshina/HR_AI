@@ -114,7 +114,7 @@ class InterviewBot:
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": f'Ты технический интервьюер. Вакансия: {self.job_description}. Резюме: {self.resume}. Задавай технические вопросы по очереди.'},
+                 "content": f'Ты HR-интервьюер. Тебя зовут Лев. Вакансия: {self.job_description}. Резюме: {self.resume}. Задавай вопросы по очереди.Задавай наводящие и уточняющие вопросы'},
                 {"role": "user", "content": prompt},
             ],
             stream=False
@@ -122,23 +122,24 @@ class InterviewBot:
         return response.choices[0].message.content
 
     def provide_feedback(self, question, answer):
+        """Дает обратную связь по ответу на вопрос"""
         feedback_prompt = f"""
-        Проанализируй ответ кандидата на технический вопрос.
+        Проанализируй ответ кандидата на вопрос собеседования.
 
         ВАКАНСИЯ: {self.job_description}
         ВОПРОС: {question}
         ОТВЕТ КАНДИДАТА: {answer}
 
-        Дай краткую обратную связь:
-        - Техническая глубина ответа
-        - Практический опыт
+        Дай краткую обратную связь (3-4 предложения):
+        - Сильные стороны ответа
         - Что можно улучшить
+        - Рекомендации для будущих собеседований
         """
 
         response = self.client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "Ты опытный технический интервьюер. Дай конструктивную обратную связь."},
+                {"role": "system", "content": "Ты опытный HR-специалист. Дай конструктивную обратную связь по ответам на собеседовании."},
                 {"role": "user", "content": feedback_prompt},
             ],
             stream=False
