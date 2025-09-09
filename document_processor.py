@@ -137,7 +137,7 @@ def get_embedding(text, model_path):
 
 
 def _generate_recommendation(score: float):
-    if score >= 50:
+    if score >= 85.5:
 
         return "Хорошее соответствие. Рекомендуем пригласить на собеседование."
 
