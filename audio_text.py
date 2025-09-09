@@ -109,11 +109,22 @@ def recognize_audio(audio_file, language='ru-RU'):
         return None
 
 
-def recognize_audio_whisper(audio):
+def recognize_audio_whisper(audio_file):
     try:
+        # Проверяем существование файла
+        if not os.path.exists(audio_file):
+            print(f"❌ Аудио файл не найден: {audio_file}")
+            return "Файл не найден"
+
+        # Проверяем размер файла
+        file_size = os.path.getsize(audio_file)
+        if file_size == 0:
+            print(f"⚠️ Пустой аудио файл: {audio_file}")
+            return "Пустая запись"
+
         model = whisper.load_model('base')
-        result = model.transcribe(audio, fp16=False)
-        print(result['text'])
+        result = model.transcribe(audio_file, fp16=False)
+        print(f"✅ Распознано: {result['text']}")
         return result['text']
     except Exception as e:
         print(f"❌ Ошибка распознавания Whisper: {e}")
