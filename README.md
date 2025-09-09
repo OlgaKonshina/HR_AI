@@ -125,7 +125,7 @@ sequenceDiagram
 
 ```bash
 # Клонируйте репозиторий
-git clone [<your-repo-url>](https://github.com/OlgaKonshina/HR_AI)
+git clone https://github.com/OlgaKonshina/HR_AI
 cd interview-bot
 
 # Создайте виртуальное окружение
