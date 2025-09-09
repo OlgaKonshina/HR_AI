@@ -13,6 +13,13 @@ from app import InterviewBot, print_interview_summary
 st.set_page_config(page_title="Interview Bot", page_icon="🤖", layout="wide")
 st.title("🤖 HR - бот Лев")
 
+# Предзагрузка модели Whisper при старте
+try:
+    from audio_text import load_whisper_model
+    load_whisper_model()
+except Exception as e:
+    st.sidebar.warning(f"⚠️ Модель Whisper не загружена: {e}")
+
 # === Загрузка документов ===
 st.header("📂 Загрузка документов")
 job_file = st.file_uploader("Описание вакансии", type=["pdf", "docx", "rtf", "txt", "csv", "json"])
