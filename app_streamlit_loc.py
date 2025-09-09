@@ -88,7 +88,7 @@ if job_file and resume_file and (similarity is None or similarity == 0):
     st.info(_generate_recommendation(similarity))
 
 # === Автоматический диалог ===
-if similarity and similarity >= 50:
+if similarity and similarity >= 85.5:
     st.success("✅ Кандидат подходит! Можно начать собеседование.")
     num_questions = st.slider("Количество вопросов", 3, 15, 5)  # Уменьшено для тестирования
 
