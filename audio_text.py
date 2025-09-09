@@ -11,6 +11,47 @@ import sys
 API_KEY = YANDEX_API_KEY
 FOLDER_ID = YANDEX_FOLDER_ID
 
+# Глобальная переменная для модели Whisper
+whisper_model = None
+
+
+def load_whisper_model():
+    """Загружает модель Whisper один раз при старте"""
+    global whisper_model
+    if whisper_model is None:
+        try:
+            print("🔄 Загрузка модели Whisper...")
+            whisper_model = whisper.load_model('base')
+            print("✅ Модель Whisper загружена")
+        except Exception as e:
+            print(f"❌ Ошибка загрузки Whisper: {e}")
+            whisper_model = None
+    return whisper_model
+
+
+def recognize_audio_whisper(audio_file):
+    """Распознавание речи через Whisper (оффлайн)"""
+    try:
+        # Проверяем файл
+        if not os.path.exists(audio_file):
+            return "Аудиофайл не найден"
+
+        if os.path.getsize(audio_file) < 1000:
+            return "Запись слишком короткая"
+
+        # Загружаем модель
+        model = load_whisper_model()
+        if model is None:
+            return "Модель распознавания не доступна"
+
+        # Распознаем речь
+        result = model.transcribe(audio_file, fp16=False, language='ru')
+        print(f"✅ Распознано: {result['text']}")
+        return result['text']
+
+    except Exception as e:
+        print(f"❌ Ошибка распознавания Whisper: {e}")
+        return "Ошибка распознавания речи"
 
 def text_to_ogg(text: str, folder: str = "audio/questions") -> str:
     os.makedirs(folder, exist_ok=True)

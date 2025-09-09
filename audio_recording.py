@@ -42,33 +42,41 @@ def load_audio(duration: int = 25, folder: str = "audio/answers") -> str:
         return filename
 
 
-def load_audio_(question_id: int, duration: int = 30, folder: str = "audio/answers") -> str:
-    os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, f"answer_{question_id}.wav")
-
-    print(f"🎙️ Запись ответа: {duration} секунд...")
+def load_audio(duration: int = 25, folder: str = "audio/answers") -> str:
+    print(f"🎙️ Запись {duration} секунд...")
 
     try:
+        # Создаем временный файл
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            temp_filename = tmp.name
+
+        # Записываем аудио
         sample_rate = 44100
         audio = sd.rec(int(duration * sample_rate),
                        samplerate=sample_rate,
-                       channels=1,
-                       dtype='float32')
+                       channels=1)
         sd.wait()
 
-        sf.write(filename, audio, sample_rate)
-        print(f"✅ Аудио сохранено: {filename}")
+        # Сохраняем
+        sf.write(temp_filename, audio, sample_rate)
 
-        return filename
+        # Копируем в конечную папку
+        os.makedirs(folder, exist_ok=True)
+        final_filename = os.path.join(folder, f"answer_{len(os.listdir(folder)) + 1}.wav")
+        import shutil
+        shutil.copy2(temp_filename, final_filename)
+
+        # Удаляем временный файл
+        os.unlink(temp_filename)
+
+        print(f"✅ Запись успешна: {final_filename}")
+        return final_filename
 
     except Exception as e:
         print(f"❌ Ошибка записи: {e}")
-
-        # Создаем заглушку
-        dummy_audio = np.zeros(44100 * 2)
-        sf.write(filename, dummy_audio, 44100)
-
-        return filename
+        # Возвращаем заглушку
+        return "audio/answers/fallback.wav"
 
 
 # Функция для проверки аудио устройств
