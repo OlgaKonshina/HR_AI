@@ -126,7 +126,7 @@ sequenceDiagram
 ```bash
 # Клонируйте репозиторий
 git clone https://github.com/OlgaKonshina/HR_AI
-cd interview-bot
+cd HR_AI
 
 # Создайте виртуальное окружение
 python -m venv venv
