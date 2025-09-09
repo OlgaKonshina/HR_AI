@@ -1,11 +1,10 @@
-# HR_AI
-# 🤖 Interview Bot - Виртуальный HR-ассистент
+# Хакатон ВТБ/трек HR_AI (команда Mindshift)
+# 🤖 Interview Bot - Виртуальный HR-ассистент ЛЕВ
 
 <div align="center">
 
 [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white)](https://streamlit.io/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=PyTorch&logoColor=white)](https://pytorch.org/)
-[![OpenAI](https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white)](https://openai.com/)
 [![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
 
 **Интеллектуальная система для проведения автоматических собеседований с анализом резюме и генерацией персонализированных вопросов**
