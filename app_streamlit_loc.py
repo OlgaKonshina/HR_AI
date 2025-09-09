@@ -42,7 +42,7 @@ if job_file and resume_file:
         st.error(f"Не удалось вычислить эмбеддинги: {e}")
 
 # === Автоматический диалог ===
-if similarity and similarity >= 50:
+if similarity and similarity >= 85.5:
     st.success("✅ Кандидат подходит! Можно начать собеседование.")
     num_questions = st.slider("Количество вопросов", 3, 15, 30)
 
