@@ -9,9 +9,6 @@
 
 **Revolutionizing recruitment with AI-driven voice interviews and intelligent candidate matching**
 
-[![Demo](https://img.shields.io/badge/🚀-Live_Demo-blue?style=for-the-badge)](https://your-demo-link.com)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
-
 </div>
 
 ## 🎯 Уникальное предложение
