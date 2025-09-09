@@ -4,7 +4,9 @@ import requests
 import whisper
 import pygame
 import time
-from playsound import playsound
+import subprocess
+import sys
+
 # Данные для Яндекс SpeechKit
 API_KEY = YANDEX_API_KEY
 FOLDER_ID = YANDEX_FOLDER_ID
@@ -26,7 +28,7 @@ def text_to_ogg(text: str, folder: str = "audio/questions") -> str:
         'lang': 'ru-RU',
         'voice': 'zahar',
         'speed': '1.5',
-        'format': 'oggopus',  # Формат OGG Opus
+        'format': 'oggopus',
         'sampleRateHertz': 48000,
     }
 
@@ -36,16 +38,36 @@ def text_to_ogg(text: str, folder: str = "audio/questions") -> str:
     if response.status_code == 200:
         with open(filename, 'wb') as f:
             f.write(response.content)
-            playsound(filename)
         print(f"Аудио сохранено в OGG: {filename}")
-        return True
+
+        # Воспроизводим аудио с помощью pygame (кроссплатформенное решение)
+        try:
+            pygame.mixer.init()
+            pygame.mixer.music.load(filename)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.1)
+            return True
+        except Exception as e:
+            print(f"⚠️ Ошибка воспроизведения через pygame: {e}")
+            # Альтернативный способ воспроизведения
+            try:
+                if sys.platform == "win32":
+                    os.startfile(filename)
+                elif sys.platform == "darwin":  # macOS
+                    subprocess.call(("open", filename))
+                else:  # Linux
+                    subprocess.call(("aplay", filename))
+                return True
+            except Exception as e2:
+                print(f"⚠️ Ошибка альтернативного воспроизведения: {e2}")
+                return False
     else:
-        print(f"Ошибка: {response.status_code} - {response.text}")
+        print(f"❌ Ошибка синтеза речи: {response.status_code} - {response.text}")
         return False
 
 
 def recognize_audio(audio_file, language='ru-RU'):
-
     API_KEY = YANDEX_API_KEY
     FOLDER_ID = YANDEX_FOLDER_ID
 
@@ -54,7 +76,7 @@ def recognize_audio(audio_file, language='ru-RU'):
 
     # Проверяем существование файла
     if not os.path.exists(audio_file):
-        print(f"Файл {audio_file} не найден!")
+        print(f"❌ Файл {audio_file} не найден!")
         return None
 
     try:
@@ -78,17 +100,21 @@ def recognize_audio(audio_file, language='ru-RU'):
             result = response.json()
             return result.get('result', '')
         else:
-            print(f"Ошибка API: {response.status_code}")
+            print(f"❌ Ошибка API: {response.status_code}")
             print(f"Детали: {response.text}")
             return None
 
     except Exception as e:
-        print(f"Ошибка при обработке файла: {e}")
+        print(f"❌ Ошибка при обработке файла: {e}")
         return None
 
 
 def recognize_audio_whisper(audio):
-    model = whisper.load_model('turbo')
-    result = model.transcribe(audio, fp16=False)  # добавляем аудио для обработки
-    print(result['text'])
-    return result['text']
+    try:
+        model = whisper.load_model('base')
+        result = model.transcribe(audio, fp16=False)
+        print(result['text'])
+        return result['text']
+    except Exception as e:
+        print(f"❌ Ошибка распознавания Whisper: {e}")
+        return "Не удалось распознать речь"
