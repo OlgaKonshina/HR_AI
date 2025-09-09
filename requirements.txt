@@ -1,7 +1,7 @@
 streamlit==1.32.0
 torch==2.1.0
 transformers==4.36.0
-openai==1.3.0
+openai==0.28.1
 whisper-openai==1.0
 pygame==2.5.0
 playsound==1.3.0
