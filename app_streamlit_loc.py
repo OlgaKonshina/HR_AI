@@ -2,23 +2,15 @@ import streamlit as st
 import torch
 import time
 import os
-from app import InterviewBot
 from config import DEEPSEEK_API_KEY
 from audio_recording import load_audio
 from audio_text import recognize_audio_whisper, text_to_ogg
 from document_processor import DocumentReader, extract_job_title, get_embedding, _generate_recommendation
-from app import InterviewBot, print_interview_summary
+from app_new_2 import InterviewBot  # Обновлённый класс
 
 # === Настройки страницы ===
 st.set_page_config(page_title="Interview Bot", page_icon="🤖", layout="wide")
 st.title("🤖 HR - бот Лев")
-
-# Предзагрузка модели Whisper при старте
-try:
-    from audio_text import load_whisper_model
-    load_whisper_model()
-except Exception as e:
-    st.sidebar.warning(f"⚠️ Модель Whisper не загружена: {e}")
 
 # === Загрузка документов ===
 st.header("📂 Загрузка документов")
@@ -43,174 +35,112 @@ if job_file and resume_file:
     st.write(f"**Вакансия:** {job_title}")
 
     try:
-        # Проверяем, есть ли локальная модель, если нет - используем онлайн
-        if os.path.exists("model") and os.path.exists("model/config.json"):
-            model_path = "model"
-            st.info("🔄 Используется локальная модель RuBERT-Tiny2")
-        else:
-            model_path = "cointegrated/rubert-tiny2"
-            st.info("🌐 Используется онлайн модель RuBERT-Tiny2")
-
+        model_path = "model" if os.path.exists("model/config.json") else "cointegrated/rubert-tiny2"
         job_emb = get_embedding(job_text, model_path)
         resume_emb = get_embedding(resume_text, model_path)
-
-        # Проверяем, что эмбеддинги успешно получены
         if job_emb is not None and resume_emb is not None:
             similarity = torch.mm(resume_emb, job_emb.T).item() * 100
             st.write(f"🔗 Схожесть резюме и вакансии: **{similarity:.2f}%**")
             st.info(_generate_recommendation(similarity))
-        else:
-            st.error("❌ Не удалось получить эмбеддинги документов")
-
     except Exception as e:
-        st.error(f"❌ Не удалось вычислить эмбеддинги: {e}")
-        st.info("ℹ️ Попробуйте использовать упрощенный режим или проверьте подключение к интернету")
-
-# === Упрощенный режим если модель не работает ===
-if job_file and resume_file and (similarity is None or similarity == 0):
-    st.warning("⚠️ Используется упрощенный расчет схожести")
-
-
-    # Простая текстовая схожесть без эмбеддингов
-    def simple_similarity(text1, text2):
-        import re
-        from collections import Counter
-
-        # Извлекаем слова из текстов
-        words1 = re.findall(r'\b[а-яА-Яa-zA-Z]{4,}\b', text1.lower())
-        words2 = re.findall(r'\b[а-яА-Яa-zA-Z]{4,}\b', text2.lower())
-
-        if not words1 or not words2:
-            return 50.0  # Значение по умолчанию
-
-        # Считаем совпадения ключевых слов
-        common_words = set(words1) & set(words2)
-        similarity_score = len(common_words) / len(set(words1)) *100
-
-        return min(similarity_score, 100)
-
-
-    similarity = simple_similarity(job_text, resume_text)
-    st.write(f"🔗 Схожесть резюме и вакансии: **{similarity:.2f}%**")
-    st.info(_generate_recommendation(similarity))
+        st.error(f"❌ Ошибка вычисления эмбеддингов: {e}")
 
 # === Автоматический диалог ===
-if similarity and similarity >= 50:
+if similarity and similarity >= 85.5:
     st.success("✅ Кандидат подходит! Можно начать собеседование.")
-    num_questions = st.slider("Количество вопросов", 3, 15, 5)  # Уменьшено для тестирования
+    num_questions = st.slider("Количество вопросов", 3, 30, 5)
 
     if st.button("🚀 Старт собеседования"):
-        try:
-            bot = InterviewBot(
-                api_key=DEEPSEEK_API_KEY,
-                job_description=job_text,
-                resume=resume_text
-            )
-            st.session_state["bot"] = bot
-            st.session_state["num_questions"] = num_questions
-            st.session_state["dialog_active"] = True
-            st.session_state["current_question"] = 0
-            st.session_state["chat_log"] = []
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Ошибка создания бота: {e}")
+        bot = InterviewBot(
+            api_key=DEEPSEEK_API_KEY,
+            job_description=job_text,
+            resume=resume_text,
+            num_questions=num_questions  # передаём количество вопросов
+        )
+        st.session_state["bot"] = bot
+        st.session_state["num_questions"] = num_questions
+        st.session_state["dialog_active"] = True
+        st.session_state["current_question"] = 0
+        st.session_state["chat_log"] = []
+        st.session_state["interview_terminated"] = False
+        st.rerun()
 
 if st.session_state.get("dialog_active"):
     bot = st.session_state["bot"]
     current_q = st.session_state["current_question"]
 
-    # 🔴 Кнопка завершения собеседования
+    # === Досрочное завершение ===
+    # При нажатии кнопки досрочного завершения
     if st.button("🛑 Закончить собеседование"):
-        st.success("✅ Собеседование завершено кандидатом.")
-        try:
-            final_assessment = bot.generate_final_assessment()
-            st.subheader("Итоговая оценка")
-            st.write(final_assessment)
-            bot.save_interview()
+        bot.terminated = True
+        last_answer_note = "⚠️ Кандидат досрочно завершил интервью. Он сам закончил собеседование."
 
-            # 📊 Краткая выжимка
-            with st.sidebar.expander("📊 Краткая выжимка собеседования"):
-                print_interview_summary(bot)
-        except Exception as e:
-            st.error(f"❌ Ошибка генерации отчета: {e}")
+        # Генерация итогов
+        bot.overall_feedback = bot.generate_overall_feedback(last_answer_note=last_answer_note)
+        bot.final_assessment = bot.generate_final_assessment(last_answer_note=last_answer_note)
+        bot.save_interview()
 
+        # Вывод на экран
+        st.subheader("📊 Итоговая оценка для HR")
+        st.write(bot.final_assessment)
+        st.sidebar.subheader("📝 Фидбек для кандидата")
+        st.sidebar.write(bot.overall_feedback)
+
+        # ⛔ Останавливаем интервью сразу
         st.session_state["dialog_active"] = False
         st.stop()
 
+    # === Генерация вопросов ===
     if current_q < st.session_state["num_questions"]:
-        try:
-            prev_answer = bot.answers[-1] if bot.answers else None
-            question = bot.generate_question(prev_answer)
-            bot.questions.append(question)
-
-            st.subheader(f"Вопрос {current_q + 1}:")
-            st.write(question)
-
-            # Озвучиваем вопрос с обработкой ошибок
-            try:
-                text_to_ogg(question)
-            except Exception as e:
-                st.warning(f"⚠️ Не удалось озвучить вопрос: {e}")
-
-            # Запись ответа
-            st.write("🎙️ Говорите (25 секунд)...")
-            try:
-                audio_file = load_audio(duration=25)
-                answer = recognize_audio_whisper(audio_file)
-                bot.answers.append(answer)
-            except Exception as e:
-                st.error(f"❌ Ошибка записи аудио: {e}")
-                answer = "Не удалось распознать ответ"
-                bot.answers.append(answer)
-
-            # Обратная связь
-            try:
-                feedback = bot.provide_feedback(question, answer)
-                bot.feedbacks.append(feedback)
-            except Exception as e:
-                st.error(f"❌ Ошибка генерации обратной связи: {e}")
-                feedback = "Не удалось сгенерировать обратную связь"
-                bot.feedbacks.append(feedback)
-
-            st.session_state["chat_log"].append(
-                {"question": question, "answer": answer, "feedback": feedback}
-            )
-            st.session_state["current_question"] += 1
-
-            # Переход к следующему вопросу
-            time.sleep(2)
+        prev_answer = bot.answers[-1] if bot.answers else None
+        question = bot.generate_question(prev_answer)
+        if question is None:
+            st.session_state["current_question"] = st.session_state["num_questions"]
             st.rerun()
 
-        except Exception as e:
-            st.error(f"❌ Ошибка во время собеседования: {e}")
-            st.session_state["dialog_active"] = False
+        bot.questions.append(question)
 
-    else:
-        st.success("🎯 Собеседование завершено автоматически!")
+        st.subheader(f"Вопрос :")
+        st.write(question)
+
         try:
-            final_assessment = bot.generate_final_assessment()
-            st.subheader("Итоговая оценка")
-            st.write(final_assessment)
-            bot.save_interview()
+            text_to_ogg(question)
+        except:
+            pass
 
-            # 📊 Краткая выжимка
-            with st.sidebar.expander("📊 Краткая выжимка собеседования"):
-                print_interview_summary(bot)
-        except Exception as e:
-            st.error(f"❌ Ошибка генерации отчета: {e}")
+        st.write("🎙️ Говорите (25 секунд)...")
+        try:
+            audio_file = load_audio(duration=25)
+            answer = recognize_audio_whisper(audio_file)
+            bot.answers.append(answer)
+        except:
+            answer = "Не удалось распознать ответ"
+            bot.answers.append(answer)
+
+        # Заглушка фидбека по каждому вопросу
+        feedback = "Обратная связь будет дана после завершения интервью"
+        st.session_state["chat_log"].append({"question": question, "answer": answer, "feedback": feedback})
+        st.session_state["current_question"] += 1
+        time.sleep(1)
+        st.rerun()
+
+    else:  # автоматическое завершение
+        bot.terminated = False
+        candidate_feedback = bot.generate_overall_feedback()
+        final_assessment = bot.generate_final_assessment()
+        bot.overall_feedback = candidate_feedback
+        bot.final_assessment = final_assessment
+        bot.save_interview()
+
+        st.subheader("📊 Итоговая оценка для HR")
+        st.write(final_assessment)
+
+        with st.sidebar.expander("📝 Фидбек для кандидата", expanded=True):
+            st.write(candidate_feedback)
 
         st.session_state["dialog_active"] = False
 
-# === История диалога ===
-if "chat_log" in st.session_state and st.session_state["chat_log"]:
-    st.sidebar.header("История интервью")
-    for i, entry in enumerate(st.session_state["chat_log"], 1):
-        st.sidebar.write(f"**Вопрос {i}:** {entry['question']}")
-        st.sidebar.write(f"💬 Ответ: {entry['answer']}")
-        st.sidebar.write(f"📝 Обратная связь: {entry['feedback']}")
-        st.sidebar.markdown("---")
-
-# === Информация о статусе ===
+# === Информация о системе ===
 st.sidebar.info("""
 **ℹ️ Статус системы:**
 - Модель: RuBERT-Tiny2
