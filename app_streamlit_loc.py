@@ -8,11 +8,11 @@ from audio_text import recognize_audio_whisper, text_to_ogg
 from document_processor import DocumentReader, extract_job_title, get_embedding, _generate_recommendation
 from app_new_2 import InterviewBot  # Обновлённый класс
 
-# === Настройки страницы ===
+# Настройки страницы 
 st.set_page_config(page_title="Interview Bot", page_icon="🤖", layout="wide")
 st.title("🤖 HR - бот Лев")
 
-# === Загрузка документов ===
+#  Загрузка документов 
 st.header("📂 Загрузка документов")
 job_file = st.file_uploader("Описание вакансии", type=["pdf", "docx", "rtf", "txt", "csv", "json"])
 resume_file = st.file_uploader("Резюме кандидата", type=["pdf", "docx", "rtf", "txt", "csv", "json"])
@@ -45,7 +45,7 @@ if job_file and resume_file:
     except Exception as e:
         st.error(f"❌ Ошибка вычисления эмбеддингов: {e}")
 
-# === Автоматический диалог ===
+#  Автоматический диалог 
 if similarity and similarity >= 85.5:
     st.success("✅ Кандидат подходит! Можно начать собеседование.")
     num_questions = st.slider("Количество вопросов", 3, 30, 5)
@@ -86,7 +86,7 @@ if st.session_state.get("dialog_active"):
         st.sidebar.subheader("📝 Фидбек для кандидата")
         st.sidebar.write(bot.overall_feedback)
 
-        # ⛔ Останавливаем интервью сразу
+        # Останавливаем интервью сразу
         st.session_state["dialog_active"] = False
         st.stop()
 
@@ -100,7 +100,7 @@ if st.session_state.get("dialog_active"):
 
         bot.questions.append(question)
 
-        st.subheader(f"Вопрос :")
+        
         st.write(question)
 
         try:
@@ -140,7 +140,7 @@ if st.session_state.get("dialog_active"):
 
         st.session_state["dialog_active"] = False
 
-# === Информация о системе ===
+#  Информация о системе 
 st.sidebar.info("""
 **ℹ️ Статус системы:**
 - Модель: RuBERT-Tiny2
