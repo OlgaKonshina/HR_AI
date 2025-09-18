@@ -6,7 +6,7 @@ from config import DEEPSEEK_API_KEY
 from audio_recording import load_audio
 from audio_text import recognize_audio_whisper, text_to_ogg
 from document_processor import DocumentReader, extract_job_title, get_embedding, _generate_recommendation
-from app_new_2 import InterviewBot  # Обновлённый класс
+from app_new_2 import InterviewBot  
 
 # Настройки страницы 
 st.set_page_config(page_title="Interview Bot", page_icon="🤖", layout="wide")
